@@ -1,0 +1,24 @@
+{
+  "pluginAlias": "Control4Proxy",
+  "pluginType": "platform",
+  "singular": true,
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string",
+        "required": true,
+        "default": "Control4 Proxy"
+      },
+      "port": {
+        "title": "WebSocket Port",
+        "type": "integer",
+        "default": 4050,
+        "minimum": 1,
+        "required": true
+      }
+    }
+  },
+  "form": ["name", "port"]
+}
