@@ -1,5 +1,5 @@
 {
-  "pluginAlias": "ExampleHomebridgePlugin",
+  "pluginAlias": "Control4Proxy",
   "pluginType": "platform",
   "singular": true,
   "schema": {
@@ -9,8 +9,16 @@
         "title": "Name",
         "type": "string",
         "required": true,
-        "default": "Example Dynamic Platform"
+        "default": "Control4 Proxy"
+      },
+      "port": {
+        "title": "WebSocket Port",
+        "type": "integer",
+        "default": 4050,
+        "minimum": 1,
+        "required": true
       }
     }
-  }
+  },
+  "form": ["name", "port"]
 }
