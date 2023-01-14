@@ -58,6 +58,7 @@ type Control4ProxyIncomingGetMessagePayload = Control4ProxyIncomingCommonMessage
 interface Control4ProxyAccessoryDefinition {
   uuid: string;
   name: string;
+  category?: number;
   services: {
     [key: string]: 'default' | Control4ProxyServiceDefinition;
   };
@@ -277,6 +278,9 @@ export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
     } else {
       const existingAccessory = this.accessories.has(uuid);
       const accessory = this.accessories.get(uuid) ?? new this.api.platformAccessory(name, uuid);
+      if (typeof payload.category === 'number') {
+        accessory.category = payload.category;
+      }
 
       // Update the accessory context with the definition.
       accessory.context = <Control4ProxyPlatformAccessoryContext>{
