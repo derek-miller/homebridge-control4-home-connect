@@ -13,7 +13,7 @@ import {
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createServer, Server } from 'http';
-import { CharacteristicProps } from 'hap-nodejs/dist/lib/Characteristic';
+import { CharacteristicProps, Perms } from 'hap-nodejs/dist/lib/Characteristic';
 
 type Control4ProxyHomebridgePlatformConfig = PlatformConfig & { port: number };
 
@@ -44,6 +44,7 @@ type Control4ProxyIncomingSetMessagePayload = Control4ProxyIncomingCommonMessage
   service: string;
   characteristic: string;
   value: CharacteristicValue;
+  identifier?: CharacteristicValue | null;
 };
 
 type Control4ProxyIncomingGetMessagePayload = Control4ProxyIncomingCommonMessagePayload & {
@@ -73,7 +74,10 @@ type Control4ProxyServiceDefinition = {
 };
 
 type Control4ProxyCharacteristicsDefinition = {
-  [name: string]: 'default' | Control4ProxyCharacteristicDefinition;
+  [name: Exclude<string, 'value' | 'props'>]:
+    | 'default'
+    | CharacteristicValue
+    | Control4ProxyCharacteristicDefinition;
 };
 
 type Control4ProxyCharacteristicDefinition = {
@@ -107,7 +111,7 @@ type Control4ProxyOutgoingMessage =
     }
   | {
       topic: 'remove-response';
-      payload: Control4ProxyOutgoingMessagePayload<Control4ProxyAccessoryDefinition | null>;
+      payload: Control4ProxyOutgoingMessagePayload<Control4ProxyIncomingRemoveMessagePayload | null>;
     }
   | {
       topic: 'get-response';
@@ -275,16 +279,15 @@ export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
   addAccessory(
     payload: Control4ProxyIncomingAddMessagePayload,
   ): Control4ProxyOutgoingMessagePayload<Control4ProxyIncomingAddMessagePayload> {
-    let ack, message;
+    let ack = false,
+      message;
     const name = payload.name;
     const uuid = payload.uuid;
     const serviceNames = Object.keys(payload?.services ?? {});
     const unknownServiceNames = serviceNames.filter((s) => !this.Service[s]);
     if (serviceNames.length === 0) {
-      ack = false;
       message = 'accessories must contain at least 1 service';
     } else if (unknownServiceNames.length > 0) {
-      ack = false;
       message = 'unknown service(s): ' + unknownServiceNames.join(', ');
     } else {
       const existingAccessory = this.accessories.has(uuid);
@@ -298,118 +301,16 @@ export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
         definition: payload,
       };
 
-      ack = true;
-      message = 'unknown failure occurred';
-      for (const [serviceName, serviceDefinition] of Object.entries(payload.services)) {
-        const service =
-          serviceName === 'AccessoryInformation'
-            ? accessory.getService(this.Service.AccessoryInformation)
-            : accessory.getServiceById(
-                this.Service[serviceName],
-                `${accessory.UUID}.${serviceName}`,
-              ) ||
-              accessory.addService(
-                this.Service[serviceName],
-                accessory.displayName,
-                `${accessory.UUID}.${serviceName}`,
-              );
-        if (!ack) {
-          break;
-        }
-        if (service === undefined) {
-          ack = false;
-          message = `unable to add service ${serviceName} to '${accessory.displayName}'`;
-          break;
-        }
-        const { characteristics: characteristicsDefinition, linkedServices = null } =
-          serviceDefinition === 'default' ? { characteristics: {} } : serviceDefinition;
-
-        // Add any missing required characteristics
-        for (const requiredCharacteristic of service.characteristics) {
-          const characteristicName = requiredCharacteristic.constructor.name;
-          if (
-            characteristicName === 'Name' ||
-            characteristicsDefinition[characteristicName] !== undefined
-          ) {
-            continue;
-          }
-          characteristicsDefinition[characteristicName] = 'default';
-        }
-
-        const error = this.addCharacteristicsToService(
-          accessory,
-          service,
-          characteristicsDefinition,
-        );
-        if (error) {
-          ack = false;
-          message = error;
-          break;
-        }
-
-        if (linkedServices !== null && !Array.isArray(linkedServices)) {
-          ack = false;
-          message = `invalid type for service ${serviceName} linkedServices; expected an array`;
-          break;
-        }
-        for (const [i, linkedServicesDefinition] of (linkedServices ?? []).entries()) {
-          for (const [linkedServiceName, linkedServiceDefinition] of Object.entries(
-            linkedServicesDefinition,
-          )) {
-            const { characteristics: linkedCharacteristicsDefinition } =
-              linkedServiceDefinition === 'default'
-                ? { characteristics: {} }
-                : linkedServiceDefinition;
-            const linkedService =
-              accessory.getServiceById(
-                this.Service[linkedServiceName],
-                `${accessory.UUID}.${linkedServiceName}.${i}`,
-              ) ||
-              accessory.addService(
-                this.Service[linkedServiceName],
-                linkedCharacteristicsDefinition?.Name ?? `${accessory.displayName} (${i})`,
-                `${accessory.UUID}.${linkedServiceName}.${i}`,
-              );
-            if (linkedService === undefined) {
-              ack = false;
-              message = `unable to add linked service ${linkedServiceName} to ${serviceName}`;
-              break;
-            }
-
-            // Add any missing required characteristics
-            for (const requiredCharacteristic of linkedService.characteristics) {
-              const characteristicName = requiredCharacteristic.constructor.name;
-              if (
-                characteristicName === 'Name' ||
-                linkedCharacteristicsDefinition[characteristicName] !== undefined
-              ) {
-                continue;
-              }
-              linkedCharacteristicsDefinition[characteristicName] = 'default';
-            }
-
-            const error = this.addCharacteristicsToService(
-              accessory,
-              linkedService,
-              linkedCharacteristicsDefinition,
-            );
-            if (error) {
-              ack = false;
-              message = error;
-              break;
-            }
-            service.addLinkedService(linkedService);
-          }
-        }
-      }
-
-      if (!ack) {
+      const errorMessage = this.addServicesToAccessory(accessory, payload.services);
+      if (errorMessage) {
+        message = errorMessage;
         this.accessories.delete(accessory.UUID);
         if (!payload.external && existingAccessory) {
           this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
         }
       } else {
         // Valid definition -> register or update the accessory
+        ack = true;
         this.accessories.set(accessory.UUID, accessory);
         if (payload.external) {
           message = `added external accessory '${name}'`;
@@ -431,59 +332,147 @@ export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
     };
   }
 
+  addServicesToAccessory(
+    accessory: PlatformAccessory,
+    servicesDefinition: Control4ProxyServicesDefinition,
+    parentService: Service | null = null,
+  ): string | null {
+    for (const [serviceName, serviceDefinition] of Object.entries(servicesDefinition)) {
+      const { characteristics: characteristicsDefinition, linkedServices = null } =
+        serviceDefinition === 'default'
+          ? { characteristics: <Control4ProxyCharacteristicsDefinition>{} }
+          : serviceDefinition;
+
+      const idCharacteristic =
+        (<Control4ProxyCharacteristicDefinition>characteristicsDefinition.Identifier)?.value ??
+        <'default' | CharacteristicValue>characteristicsDefinition.Identifier;
+      const identifier = typeof idCharacteristic !== 'number' ? null : idCharacteristic;
+      if (parentService && identifier === null) {
+        return 'linked services must contain an Identifier characteristic';
+      }
+
+      const nameCharacteristic =
+        (<Control4ProxyCharacteristicDefinition>characteristicsDefinition.Name)?.value ??
+        <'default' | CharacteristicValue>characteristicsDefinition.Name ??
+        (<Control4ProxyCharacteristicDefinition>characteristicsDefinition.ConfiguredName)?.value ??
+        <'default' | CharacteristicValue>characteristicsDefinition.ConfiguredName;
+      const displayName =
+        typeof nameCharacteristic !== 'string' || nameCharacteristic === 'default'
+          ? null
+          : nameCharacteristic;
+      if (parentService && displayName === null) {
+        return 'linked services must contain a Name or ConfiguredName characteristic';
+      }
+
+      const service =
+        serviceName === 'AccessoryInformation'
+          ? accessory.getService(this.Service.AccessoryInformation)
+          : accessory.getServiceById(
+              this.Service[serviceName],
+              `uuid=${accessory.UUID}|service=${serviceName}|id=${identifier ?? 'default'}`,
+            ) ||
+            accessory.addService(
+              this.Service[serviceName],
+              displayName ?? accessory.displayName,
+              `uuid=${accessory.UUID}|service=${serviceName}|id=${identifier ?? 'default'}`,
+            );
+      if (service === undefined) {
+        return `unable to add service ${serviceName} to '${accessory.displayName}'`;
+      }
+      if (parentService) {
+        parentService.addLinkedService(service);
+      }
+
+      // Add any missing required characteristics
+      for (const requiredCharacteristic of service.characteristics) {
+        const characteristicName = requiredCharacteristic.constructor.name;
+        if (
+          characteristicName === 'Name' ||
+          characteristicsDefinition[characteristicName] !== undefined
+        ) {
+          continue;
+        }
+        characteristicsDefinition[characteristicName] = 'default';
+      }
+
+      const error = this.addCharacteristicsToService(accessory, service, characteristicsDefinition);
+      if (error) {
+        return error;
+      }
+
+      if (linkedServices !== null && !Array.isArray(linkedServices)) {
+        return `invalid type for service ${serviceName} linkedServices; expected an array`;
+      }
+      for (const linkedServicesDefinition of linkedServices ?? []) {
+        this.addServicesToAccessory(accessory, linkedServicesDefinition, service);
+      }
+    }
+    return null;
+  }
+
   addCharacteristicsToService(
     accessory: PlatformAccessory,
     service: Service,
     characteristics: Control4ProxyCharacteristicsDefinition,
-  ) {
+  ): string | null {
     const serviceName = service.constructor.name;
     for (const [characteristicName, characteristicPropertiesDefinition] of Object.entries(
       characteristics,
     )) {
-      const characteristic =
-        this.Characteristic[characteristicName] &&
-        service.getCharacteristic(this.Characteristic[characteristicName]);
-      if (!characteristic) {
+      if (!(characteristicName in this.Characteristic)) {
         return `unable to add characteristic ${characteristicName} to service ${serviceName}`;
       }
+      const characteristic = service.getCharacteristic(this.Characteristic[characteristicName]);
 
-      const characteristicProperties =
-        characteristicPropertiesDefinition === 'default' ? {} : characteristicPropertiesDefinition;
+      const characteristicDefinition =
+        characteristicPropertiesDefinition === 'default'
+          ? <Control4ProxyCharacteristicDefinition>{}
+          : characteristicPropertiesDefinition;
 
-      const characteristicPropertiesKeys = Object.keys(characteristicProperties);
       const { value = null, props = null } =
-        typeof characteristicProperties === 'object' &&
-        !Array.isArray(characteristicProperties) &&
-        characteristicProperties !== null &&
-        characteristicPropertiesKeys.length <= 2 &&
-        characteristicPropertiesKeys.every((k) => ['value', 'props'].includes(k))
-          ? characteristicProperties
-          : { value: characteristicProperties };
+        typeof characteristicDefinition === 'object' &&
+        !Array.isArray(characteristicDefinition) &&
+        (characteristicDefinition?.props !== undefined ||
+          characteristicDefinition?.value !== undefined)
+          ? characteristicDefinition
+          : { value: characteristicDefinition };
+
+      if (
+        props !== null &&
+        props !== undefined &&
+        typeof props === 'object' &&
+        !Array.isArray(props) &&
+        Object.keys(props).length > 0
+      ) {
+        characteristic.setProps(props);
+      }
 
       // Add set/get handlers
       if (
         serviceName !== 'AccessoryInformation' &&
         characteristicName !== 'Name' &&
-        characteristic.props.perms.includes('pr')
+        characteristic.props.perms.includes(Perms.PAIRED_READ)
       ) {
         characteristic.onGet(() => this.onGet(accessory, service, characteristic));
       }
       if (
         serviceName !== 'AccessoryInformation' &&
         characteristicName !== 'Name' &&
-        characteristic.props.perms.includes('pw')
+        characteristic.props.perms.includes(Perms.PAIRED_WRITE)
       ) {
         characteristic.onSet((value) => this.onSet(accessory, service, characteristic, value));
       }
-      if (value !== null && value !== undefined && value !== 'default') {
+      if (
+        value !== null &&
+        value !== undefined &&
+        value !== 'default' &&
+        (Array.isArray(value) || typeof value !== 'object')
+      ) {
         this.characteristicValueCache.set(
           cacheKey(accessory, service, characteristic),
           <CharacteristicValue>value,
         );
         characteristic.updateValue(value);
-      }
-      if (props !== null && props !== undefined && Object.keys(props).length > 0) {
-        characteristic.setProps(props);
       }
     }
     return null;
@@ -558,7 +547,11 @@ export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
       };
     }
 
-    const service = accessory.getServiceById(serviceType, `${accessory.UUID}.${payload.service}`);
+    const identifier = typeof payload.identifier === 'number' ? `${payload.identifier}` : 'default';
+    const service = accessory.getServiceById(
+      serviceType,
+      `uuid=${accessory.UUID}|service=${payload.service}|id=${identifier ?? 'default'}`,
+    );
     if (service === undefined) {
       return {
         ack: false,
