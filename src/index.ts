@@ -1,11 +1,11 @@
 import { API } from 'homebridge';
 
 import { PLATFORM_NAME } from './settings';
-import { Control4ProxyHomebridgePlatform } from './platform';
+import { C4ProxyHomebridgePlatform } from './platform';
 
 /**
  * This method registers the platform with Homebridge
  */
 export = (api: API) => {
-  api.registerPlatform(PLATFORM_NAME, Control4ProxyHomebridgePlatform);
+  api.registerPlatform(PLATFORM_NAME, C4ProxyHomebridgePlatform);
 };

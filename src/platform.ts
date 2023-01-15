@@ -15,31 +15,31 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { createServer, Server } from 'http';
 import { CharacteristicProps, Perms } from 'hap-nodejs/dist/lib/Characteristic';
 
-type Control4ProxyHomebridgePlatformConfig = PlatformConfig & { port: number };
+type C4ProxyHomebridgePlatformConfig = PlatformConfig & { port: number };
 
-type Control4ProxyIncomingMessage =
+type C4ProxyIncomingMessage =
   | {
       topic: 'set-request';
-      payload: Control4ProxyIncomingSetMessagePayload;
+      payload: C4ProxyIncomingSetMessagePayload;
     }
   | {
       topic: 'get-request';
-      payload: Control4ProxyIncomingGetMessagePayload;
+      payload: C4ProxyIncomingGetMessagePayload;
     }
   | {
       topic: 'add-request';
-      payload: Control4ProxyIncomingAddMessagePayload;
+      payload: C4ProxyIncomingAddMessagePayload;
     }
   | {
       topic: 'remove-request';
-      payload: Control4ProxyIncomingRemoveMessagePayload;
+      payload: C4ProxyIncomingRemoveMessagePayload;
     };
 
-interface Control4ProxyIncomingCommonMessagePayload {
+interface C4ProxyIncomingCommonMessagePayload {
   uuid: string;
 }
 
-type Control4ProxyIncomingSetMessagePayload = Control4ProxyIncomingCommonMessagePayload & {
+type C4ProxyIncomingSetMessagePayload = C4ProxyIncomingCommonMessagePayload & {
   name: string;
   service: string;
   characteristic: string;
@@ -47,7 +47,7 @@ type Control4ProxyIncomingSetMessagePayload = Control4ProxyIncomingCommonMessage
   identifier?: CharacteristicValue | null;
 };
 
-type Control4ProxyIncomingGetMessagePayload = Control4ProxyIncomingCommonMessagePayload & {
+type C4ProxyIncomingGetMessagePayload = C4ProxyIncomingCommonMessagePayload & {
   name: string;
   service: string;
   characteristic: string;
@@ -56,72 +56,72 @@ type Control4ProxyIncomingGetMessagePayload = Control4ProxyIncomingCommonMessage
 /**
  * Accessory definitions
  */
-type Control4ProxyAccessoryDefinition = {
+type C4ProxyAccessoryDefinition = {
   uuid: string;
   name: string;
   category?: number;
   external?: boolean;
-  services: Control4ProxyServicesDefinition;
+  services: C4ProxyServicesDefinition;
 };
 
-type Control4ProxyServicesDefinition = {
-  [serviceName: string]: 'default' | Control4ProxyServiceDefinition;
+type C4ProxyServicesDefinition = {
+  [serviceName: string]: 'default' | C4ProxyServiceDefinition;
 };
 
-type Control4ProxyServiceDefinition = {
-  characteristics: Control4ProxyCharacteristicsDefinition;
-  linkedServices?: Exclude<Control4ProxyServicesDefinition, 'linkedServices'>[];
+type C4ProxyServiceDefinition = {
+  characteristics: C4ProxyCharacteristicsDefinition;
+  linkedServices?: Exclude<C4ProxyServicesDefinition, 'linkedServices'>[];
 };
 
-type Control4ProxyCharacteristicsDefinition = {
+type C4ProxyCharacteristicsDefinition = {
   [name: Exclude<string, 'value' | 'props'>]:
     | 'default'
     | CharacteristicValue
-    | Control4ProxyCharacteristicDefinition;
+    | C4ProxyCharacteristicDefinition;
 };
 
-type Control4ProxyCharacteristicDefinition = {
+type C4ProxyCharacteristicDefinition = {
   value?: CharacteristicValue;
   props?: CharacteristicProps;
 };
 
-interface Control4ProxyPlatformAccessoryContext {
-  definition: Control4ProxyAccessoryDefinition;
+interface C4ProxyPlatformAccessoryContext {
+  definition: C4ProxyAccessoryDefinition;
 }
 
-type Control4ProxyIncomingAddMessagePayload = Control4ProxyIncomingCommonMessagePayload &
-  Control4ProxyAccessoryDefinition;
+type C4ProxyIncomingAddMessagePayload = C4ProxyIncomingCommonMessagePayload &
+  C4ProxyAccessoryDefinition;
 
-type Control4ProxyIncomingRemoveMessagePayload = Control4ProxyIncomingCommonMessagePayload;
+type C4ProxyIncomingRemoveMessagePayload = C4ProxyIncomingCommonMessagePayload;
 
-interface Control4ProxyOutgoingMessagePayload<T> {
+interface C4ProxyOutgoingMessagePayload<T> {
   ack: boolean;
   message: string;
   response: T;
 }
 
-type Control4ProxyOutgoingMessage =
+type C4ProxyOutgoingMessage =
   | {
       topic: 'response';
-      payload: Control4ProxyOutgoingMessagePayload<never>;
+      payload: C4ProxyOutgoingMessagePayload<never>;
     }
   | {
       topic: 'add-response';
-      payload: Control4ProxyOutgoingMessagePayload<Control4ProxyAccessoryDefinition>;
+      payload: C4ProxyOutgoingMessagePayload<C4ProxyAccessoryDefinition>;
     }
   | {
       topic: 'remove-response';
-      payload: Control4ProxyOutgoingMessagePayload<Control4ProxyIncomingRemoveMessagePayload | null>;
+      payload: C4ProxyOutgoingMessagePayload<C4ProxyIncomingRemoveMessagePayload | null>;
     }
   | {
       topic: 'get-response';
-      payload: Control4ProxyOutgoingMessagePayload<{
-        [key: string]: Control4ProxyAccessoryDefinition;
+      payload: C4ProxyOutgoingMessagePayload<{
+        [key: string]: C4ProxyAccessoryDefinition;
       }>;
     }
   | {
       topic: 'set-response';
-      payload: Control4ProxyOutgoingMessagePayload<Control4ProxyIncomingSetMessagePayload>;
+      payload: C4ProxyOutgoingMessagePayload<C4ProxyIncomingSetMessagePayload>;
     }
   | {
       topic: 'get-request';
@@ -144,14 +144,14 @@ type Control4ProxyOutgoingMessage =
       };
     };
 
-export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
+export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service;
   public readonly Characteristic: typeof Characteristic;
 
   // this is used to track restored cached accessories
   public readonly accessories: Map<string, PlatformAccessory> = new Map();
   public readonly characteristicValueCache: Map<string, CharacteristicValue> = new Map();
-  public readonly config: Control4ProxyHomebridgePlatformConfig;
+  public readonly config: C4ProxyHomebridgePlatformConfig;
   public readonly server: Server;
   public readonly ws: WebSocketServer;
   private wsConnection: WebSocket | null = null;
@@ -163,7 +163,7 @@ export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
   ) {
     this.Service = this.api.hap.Service;
     this.Characteristic = this.api.hap.Characteristic;
-    this.config = <Control4ProxyHomebridgePlatformConfig>this.platformConfig;
+    this.config = <C4ProxyHomebridgePlatformConfig>this.platformConfig;
     this.server = createServer();
     this.ws = new WebSocketServer({ server: this.server });
     this.api.on(APIEvent.DID_FINISH_LAUNCHING, async () => this.startup());
@@ -187,7 +187,7 @@ export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
         if (!message.topic || !message.payload) {
           return;
         }
-        this.send(this.onMessage(<Control4ProxyIncomingMessage>message));
+        this.send(this.onMessage(<C4ProxyIncomingMessage>message));
       });
       this.wsConnection.on('close', () => {
         this.log.info('client ip %s disconnected', req.socket.remoteAddress);
@@ -200,7 +200,7 @@ export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
     this.server.listen(this.config.port);
   }
 
-  onMessage(message: Control4ProxyIncomingMessage): Control4ProxyOutgoingMessage {
+  onMessage(message: C4ProxyIncomingMessage): C4ProxyOutgoingMessage {
     switch (message.topic) {
       case 'add-request':
         return {
@@ -277,8 +277,8 @@ export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
   }
 
   addAccessory(
-    payload: Control4ProxyIncomingAddMessagePayload,
-  ): Control4ProxyOutgoingMessagePayload<Control4ProxyIncomingAddMessagePayload> {
+    payload: C4ProxyIncomingAddMessagePayload,
+  ): C4ProxyOutgoingMessagePayload<C4ProxyIncomingAddMessagePayload> {
     let ack = false,
       message;
     const name = payload.name;
@@ -297,7 +297,7 @@ export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
       }
 
       // Update the accessory context with the definition.
-      accessory.context = <Control4ProxyPlatformAccessoryContext>{
+      accessory.context = <C4ProxyPlatformAccessoryContext>{
         definition: payload,
       };
 
@@ -334,17 +334,17 @@ export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
 
   addServicesToAccessory(
     accessory: PlatformAccessory,
-    servicesDefinition: Control4ProxyServicesDefinition,
+    servicesDefinition: C4ProxyServicesDefinition,
     parentService: Service | null = null,
   ): string | null {
     for (const [serviceName, serviceDefinition] of Object.entries(servicesDefinition)) {
       const { characteristics: characteristicsDefinition, linkedServices = null } =
         serviceDefinition === 'default'
-          ? { characteristics: <Control4ProxyCharacteristicsDefinition>{} }
+          ? { characteristics: <C4ProxyCharacteristicsDefinition>{} }
           : serviceDefinition;
 
       const idCharacteristic =
-        (<Control4ProxyCharacteristicDefinition>characteristicsDefinition.Identifier)?.value ??
+        (<C4ProxyCharacteristicDefinition>characteristicsDefinition.Identifier)?.value ??
         <'default' | CharacteristicValue>characteristicsDefinition.Identifier;
       const identifier = typeof idCharacteristic !== 'number' ? null : idCharacteristic;
       if (parentService && identifier === null) {
@@ -352,9 +352,9 @@ export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
       }
 
       const nameCharacteristic =
-        (<Control4ProxyCharacteristicDefinition>characteristicsDefinition.Name)?.value ??
+        (<C4ProxyCharacteristicDefinition>characteristicsDefinition.Name)?.value ??
         <'default' | CharacteristicValue>characteristicsDefinition.Name ??
-        (<Control4ProxyCharacteristicDefinition>characteristicsDefinition.ConfiguredName)?.value ??
+        (<C4ProxyCharacteristicDefinition>characteristicsDefinition.ConfiguredName)?.value ??
         <'default' | CharacteristicValue>characteristicsDefinition.ConfiguredName;
       const displayName =
         typeof nameCharacteristic !== 'string' || nameCharacteristic === 'default'
@@ -413,7 +413,7 @@ export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
   addCharacteristicsToService(
     accessory: PlatformAccessory,
     service: Service,
-    characteristics: Control4ProxyCharacteristicsDefinition,
+    characteristics: C4ProxyCharacteristicsDefinition,
   ): string | null {
     const serviceName = service.constructor.name;
     for (const [characteristicName, characteristicPropertiesDefinition] of Object.entries(
@@ -426,7 +426,7 @@ export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
 
       const characteristicDefinition =
         characteristicPropertiesDefinition === 'default'
-          ? <Control4ProxyCharacteristicDefinition>{}
+          ? <C4ProxyCharacteristicDefinition>{}
           : characteristicPropertiesDefinition;
 
       const { value = null, props = null } =
@@ -479,8 +479,8 @@ export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
   }
 
   removeAccessory(
-    payload: Control4ProxyIncomingRemoveMessagePayload,
-  ): Control4ProxyOutgoingMessagePayload<Control4ProxyAccessoryDefinition | null> {
+    payload: C4ProxyIncomingRemoveMessagePayload,
+  ): C4ProxyOutgoingMessagePayload<C4ProxyAccessoryDefinition | null> {
     const uuid = payload.uuid;
     const accessory = this.accessories.get(uuid);
     if (accessory) {
@@ -503,8 +503,8 @@ export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
   }
 
   getAccessories(
-    payload: Control4ProxyIncomingGetMessagePayload,
-  ): Control4ProxyOutgoingMessagePayload<{ [key: string]: Control4ProxyAccessoryDefinition }> {
+    payload: C4ProxyIncomingGetMessagePayload,
+  ): C4ProxyOutgoingMessagePayload<{ [key: string]: C4ProxyAccessoryDefinition }> {
     const accessories = {};
     for (const accessory of this.accessories.values()) {
       if (payload.uuid === 'all' || payload.uuid === accessory.UUID) {
@@ -519,8 +519,8 @@ export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
   }
 
   setValue(
-    payload: Control4ProxyIncomingSetMessagePayload,
-  ): Control4ProxyOutgoingMessagePayload<Control4ProxyIncomingSetMessagePayload> {
+    payload: C4ProxyIncomingSetMessagePayload,
+  ): C4ProxyOutgoingMessagePayload<C4ProxyIncomingSetMessagePayload> {
     const uuid = payload?.uuid;
     const accessory = uuid && this.accessories.get(uuid);
     if (!accessory) {
@@ -588,7 +588,7 @@ export class Control4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
     };
   }
 
-  send(message: Control4ProxyOutgoingMessage) {
+  send(message: C4ProxyOutgoingMessage) {
     if (this.wsConnection && this.wsConnection.OPEN) {
       this.log.debug('send: %s', JSON.stringify(message, null, 2));
       this.wsConnection.send(JSON.stringify(message), (error) => {
