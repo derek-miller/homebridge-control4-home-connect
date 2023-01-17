@@ -302,6 +302,7 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
       };
 
       const errorMessage = this.addServicesToAccessory(accessory, payload.services);
+
       if (errorMessage) {
         message = errorMessage;
         this.accessories.delete(accessory.UUID);
@@ -314,7 +315,10 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
         this.accessories.set(accessory.UUID, accessory);
         if (payload.external) {
           message = `added external accessory '${name}'`;
-          this.api.publishExternalAccessories(PLUGIN_NAME, [accessory]);
+          // Existing external accessories require a homebridge restart
+          if (!existingAccessory) {
+            this.api.publishExternalAccessories(PLUGIN_NAME, [accessory]);
+          }
         } else if (existingAccessory) {
           message = `updated accessory '${name}'`;
           this.api.updatePlatformAccessories([accessory]);
