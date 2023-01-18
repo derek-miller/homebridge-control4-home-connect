@@ -4,6 +4,7 @@ import {
   Characteristic,
   CharacteristicValue,
   DynamicPlatformPlugin,
+  HapStatusError,
   Logger,
   PlatformAccessory,
   PlatformConfig,
@@ -14,6 +15,7 @@ import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createServer, Server } from 'http';
 import { CharacteristicProps, Perms } from 'hap-nodejs/dist/lib/Characteristic';
+import { HAPStatus } from 'hap-nodejs/dist/lib/HAPServer';
 
 type C4ProxyHomebridgePlatformConfig = PlatformConfig & { port: number };
 
@@ -43,7 +45,7 @@ type C4ProxyIncomingSetMessagePayload = C4ProxyIncomingCommonMessagePayload & {
   name: string;
   service: string;
   characteristic: string;
-  value: CharacteristicValue;
+  value: CharacteristicValue | HapStatusError;
   identifier?: CharacteristicValue | null;
 };
 
@@ -150,7 +152,9 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
 
   // this is used to track restored cached accessories
   public readonly accessories: Map<string, PlatformAccessory> = new Map();
-  public readonly characteristicValueCache: Map<string, CharacteristicValue> = new Map();
+  public readonly characteristicValueCache: Map<string, CharacteristicValue | HapStatusError> =
+    new Map();
+
   public readonly config: C4ProxyHomebridgePlatformConfig;
   public readonly server: Server;
   public readonly ws: WebSocketServer;
@@ -235,7 +239,11 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
     }
   }
 
-  onGet(accessory: PlatformAccessory, service: Service, characteristic: Characteristic) {
+  onGet(
+    accessory: PlatformAccessory,
+    service: Service,
+    characteristic: Characteristic,
+  ): CharacteristicValue {
     // Trigger an update for the characteristic
     // this.send({
     //   topic: 'get-request',
@@ -246,13 +254,18 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
     //     characteristic: characteristic.constructor.name,
     //   },
     // });
-    const cachedValue = this.characteristicValueCache.get(
+    let cachedValue = this.characteristicValueCache.get(
       cacheKey(accessory, service, characteristic),
     );
-    if (cachedValue !== null && cachedValue !== undefined) {
-      return cachedValue;
+    if (cachedValue === null || cachedValue === undefined) {
+      cachedValue = new this.api.hap.HapStatusError(
+        this.api.hap.HAPStatus.NOT_ALLOWED_IN_CURRENT_STATE,
+      );
     }
-    throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.NOT_ALLOWED_IN_CURRENT_STATE);
+    if (cachedValue instanceof this.api.hap.HapStatusError) {
+      throw cachedValue;
+    }
+    return cachedValue;
   }
 
   onSet(
@@ -573,13 +586,17 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
       };
     }
 
-    const value = payload.value;
+    let value = payload.value;
     if (value === null || value === undefined) {
       return {
         ack: false,
         message: 'value cannot be null or undefined',
         response: payload,
       };
+    }
+
+    if (typeof value === 'number' && isOfTypeHAPStatus(value)) {
+      value = new this.api.hap.HapStatusError(value);
     }
 
     this.characteristicValueCache.set(cacheKey(accessory, service, characteristic), value);
@@ -610,4 +627,21 @@ function cacheKey(
   characteristic: Characteristic,
 ): string {
   return `${accessory.UUID}:${service.UUID}:${characteristic.UUID}`;
+}
+
+function isOfTypeHAPStatus(status: number): status is HAPStatus {
+  return (
+    status === HAPStatus.INSUFFICIENT_PRIVILEGES ||
+    status === HAPStatus.SERVICE_COMMUNICATION_FAILURE ||
+    status === HAPStatus.RESOURCE_BUSY ||
+    status === HAPStatus.READ_ONLY_CHARACTERISTIC ||
+    status === HAPStatus.WRITE_ONLY_CHARACTERISTIC ||
+    status === HAPStatus.NOTIFICATION_NOT_SUPPORTED ||
+    status === HAPStatus.OUT_OF_RESOURCE ||
+    status === HAPStatus.OPERATION_TIMED_OUT ||
+    status === HAPStatus.RESOURCE_DOES_NOT_EXIST ||
+    status === HAPStatus.INVALID_VALUE_IN_REQUEST ||
+    status === HAPStatus.INSUFFICIENT_AUTHORIZATION ||
+    status === HAPStatus.NOT_ALLOWED_IN_CURRENT_STATE
+  );
 }
