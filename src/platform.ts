@@ -132,6 +132,7 @@ type C4ProxyOutgoingMessage =
         name?: string;
         service: string;
         characteristic: string;
+        identifier?: CharacteristicValue;
       };
     }
   | {
@@ -142,7 +143,7 @@ type C4ProxyOutgoingMessage =
         service: string;
         characteristic: string;
         value: CharacteristicValue;
-        identifier?: CharacteristicValue | null;
+        identifier?: CharacteristicValue;
       };
     };
 
@@ -282,8 +283,9 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
         name: accessory.displayName,
         service: service.constructor.name,
         characteristic: characteristic.constructor.name,
-        identifier: service.characteristics.find((c) => c instanceof this.Characteristic.Identifier)
-          ?.value,
+        identifier:
+          service.characteristics.find((c) => c instanceof this.Characteristic.Identifier)?.value ??
+          undefined,
         value,
       },
     });
@@ -396,9 +398,6 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
       if (service === undefined) {
         return `unable to add service ${serviceName} to '${accessory.displayName}'`;
       }
-      if (parentService) {
-        parentService.addLinkedService(service);
-      }
 
       // Add any missing required characteristics
       for (const requiredCharacteristic of service.characteristics) {
@@ -415,6 +414,10 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
       const error = this.addCharacteristicsToService(accessory, service, characteristicsDefinition);
       if (error) {
         return error;
+      }
+
+      if (parentService) {
+        parentService.addLinkedService(service);
       }
 
       if (linkedServices !== null && !Array.isArray(linkedServices)) {
@@ -626,7 +629,7 @@ function cacheKey(
   service: Service,
   characteristic: Characteristic,
 ): string {
-  return `${accessory.UUID}:${service.UUID}:${characteristic.UUID}`;
+  return `${accessory.UUID}:${service.UUID}|${service.subtype ?? ''}:${characteristic.UUID}`;
 }
 
 function isOfTypeHAPStatus(status: number): status is HAPStatus {
