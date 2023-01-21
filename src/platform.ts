@@ -316,15 +316,33 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
         definition: payload,
       };
 
-      const errorMessage = this.addServicesToAccessory(accessory, payload.services);
+      const { error, addedServices = [] } = this.addServicesToAccessory(
+        accessory,
+        payload.services,
+      );
 
-      if (errorMessage) {
-        message = errorMessage;
+      if (error) {
+        message = error;
         this.accessories.delete(accessory.UUID);
         if (!payload.external && existingAccessory) {
           this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
         }
       } else {
+        // Remove any cached services that were orphaned.
+        accessory.services
+          .filter(
+            (service) =>
+              service.constructor.name !== 'AccessoryInformation' &&
+              !addedServices.some((s) => Object.is(s, service)),
+          )
+          .forEach((service) => {
+            this.log.info(
+              'Removing orphaned service %s from %s',
+              service.displayName || service.constructor.name,
+              accessory.displayName || accessory.constructor.name,
+            );
+            accessory.removeService(service);
+          });
         // Valid definition -> register or update the accessory
         ack = true;
         this.accessories.set(accessory.UUID, accessory);
@@ -354,8 +372,10 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
   addServicesToAccessory(
     accessory: PlatformAccessory,
     servicesDefinition: C4ProxyServicesDefinition,
-    parentService: Service | null = null,
-  ): string | null {
+    parentService?: Service,
+    addedServices?: Service[],
+  ): { error?: string; addedServices?: Service[] } {
+    addedServices = addedServices ?? [];
     for (const [serviceName, serviceDefinition] of Object.entries(servicesDefinition)) {
       const { characteristics: characteristicsDefinition, linkedServices = null } =
         serviceDefinition === 'default'
@@ -367,7 +387,9 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
         <'default' | CharacteristicValue>characteristicsDefinition.Identifier;
       const identifier = typeof idCharacteristic !== 'number' ? null : idCharacteristic;
       if (parentService && identifier === null) {
-        return 'linked services must contain an Identifier characteristic';
+        return {
+          error: 'linked services must contain an Identifier characteristic',
+        };
       }
 
       const nameCharacteristic =
@@ -380,7 +402,9 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
           ? null
           : nameCharacteristic;
       if (parentService && displayName === null) {
-        return 'linked services must contain a Name or ConfiguredName characteristic';
+        return {
+          error: 'linked services must contain a Name or ConfiguredName characteristic',
+        };
       }
 
       const service =
@@ -395,9 +419,12 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
               displayName ?? accessory.displayName,
               `uuid=${accessory.UUID}|service=${serviceName}|id=${identifier ?? 'default'}`,
             );
-      if (service === undefined) {
-        return `unable to add service ${serviceName} to '${accessory.displayName}'`;
+      if (!service) {
+        return {
+          error: `unable to add service ${serviceName} to '${accessory.displayName}'`,
+        };
       }
+      addedServices.push(service);
 
       // Add any missing required characteristics
       for (const requiredCharacteristic of service.characteristics) {
@@ -410,40 +437,69 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
         }
         characteristicsDefinition[characteristicName] = 'default';
       }
-
-      const error = this.addCharacteristicsToService(accessory, service, characteristicsDefinition);
+      const { error, addedCharacteristics = [] } = this.addCharacteristicsToService(
+        accessory,
+        service,
+        characteristicsDefinition,
+      );
       if (error) {
-        return error;
+        return { error };
       }
+      // Remove any cached services that were orphaned.
+      service.characteristics
+        .filter(
+          (characteristic) =>
+            characteristic.constructor.name !== 'Name' &&
+            !addedCharacteristics.some((c) => Object.is(c, characteristic)),
+        )
+        .forEach((characteristic) => {
+          this.log.info(
+            'Removing orphaned characteristic %s from %s',
+            characteristic.displayName || characteristic.constructor.name,
+            accessory.displayName || accessory.constructor.name,
+          );
+          service.removeCharacteristic(characteristic);
+        });
 
       if (parentService) {
         parentService.addLinkedService(service);
       }
 
       if (linkedServices !== null && !Array.isArray(linkedServices)) {
-        return `invalid type for service ${serviceName} linkedServices; expected an array`;
+        return {
+          error: `invalid type for service ${serviceName} linkedServices; expected an array`,
+        };
       }
       for (const linkedServicesDefinition of linkedServices ?? []) {
-        this.addServicesToAccessory(accessory, linkedServicesDefinition, service);
+        this.addServicesToAccessory(accessory, linkedServicesDefinition, service, addedServices);
       }
     }
-    return null;
+    return { addedServices };
   }
 
   addCharacteristicsToService(
     accessory: PlatformAccessory,
     service: Service,
     characteristics: C4ProxyCharacteristicsDefinition,
-  ): string | null {
+    addedCharacteristics?: Characteristic[],
+  ): { error?: string; addedCharacteristics?: Characteristic[] } {
+    addedCharacteristics = addedCharacteristics ?? [];
     const serviceName = service.constructor.name;
     for (const [characteristicName, characteristicPropertiesDefinition] of Object.entries(
       characteristics,
     )) {
       if (!(characteristicName in this.Characteristic)) {
-        return `unable to add characteristic ${characteristicName} to service ${serviceName}`;
+        return {
+          error: `unknown characteristic ${characteristicName}`,
+        };
       }
       const characteristic = service.getCharacteristic(this.Characteristic[characteristicName]);
-
+      if (!characteristic) {
+        return {
+          error: `unable to add characteristic ${characteristicName} to service ${serviceName}`,
+        };
+      }
+      addedCharacteristics.push(characteristic);
       const characteristicDefinition =
         characteristicPropertiesDefinition === 'default'
           ? <C4ProxyCharacteristicDefinition>{}
@@ -495,7 +551,7 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
         characteristic.updateValue(value);
       }
     }
-    return null;
+    return { addedCharacteristics };
   }
 
   removeAccessory(
