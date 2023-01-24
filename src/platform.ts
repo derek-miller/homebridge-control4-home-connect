@@ -560,7 +560,7 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
     const uuid = payload.uuid;
     const accessory = this.accessories.get(uuid);
     if (accessory) {
-      this.log.debug("removing accessory '%s'", accessory.displayName);
+      this.log.info('Removing accessory:', accessory.displayName);
       if (!accessory.context?.definition?.external) {
         this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
       }
