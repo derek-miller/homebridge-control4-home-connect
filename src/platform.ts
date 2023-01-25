@@ -332,8 +332,9 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
         accessory.services
           .filter(
             (service) =>
-              !['AccessoryInformation', 'ProtocolInformation'].includes(service.constructor.name) &&
-              !addedServices.some((s) => Object.is(s, service)),
+              !['AccessoryInformation', 'ProtocolInformation', 'HOOBS'].includes(
+                service.constructor.name,
+              ) && !addedServices.some((s) => Object.is(s, service)),
           )
           .forEach((service) => {
             this.log.info(
