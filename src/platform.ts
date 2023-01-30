@@ -196,6 +196,7 @@ export class C4ProxyHomebridgePlatform implements DynamicPlatformPlugin {
       });
       this.wsConnection.on('close', () => {
         this.log.info('client ip %s disconnected', req.socket.remoteAddress);
+        this.characteristicValueCache.clear();
       });
       this.wsConnection.on('error', (e) => {
         this.log.error('error: %s', e.message);
