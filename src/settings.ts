@@ -7,4 +7,4 @@ export const PLATFORM_NAME = 'Control4Proxy';
 /**
  * This must match the name of your plugin as defined the package.json
  */
-export const PLUGIN_NAME = 'homebridge-control4-proxy';
+export const PLUGIN_NAME = 'homebridge-control4-home-connect';

@@ -9,7 +9,7 @@
         "title": "Name",
         "type": "string",
         "required": true,
-        "default": "Control4 Proxy"
+        "default": "Control4 Home Connect"
       },
       "port": {
         "title": "WebSocket Port",

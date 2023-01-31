@@ -51,8 +51,8 @@ automatically between changes, you first need to add your plugin as a platform i
             "platform": "config"
         },
         {
-            "name": "Control4 Proxy",
-            "platform": "Control4Proxy"
+            "name": "Control4 Home Connect",
+            "platform": "Control4HomeConnect"
             //... any other options, as listed in config.schema.json ...
         }
     ]
@@ -107,5 +107,5 @@ npm publish --tag=beta
 Users can then install the _beta_ version by appending `@beta` to the install command, for example:
 
 ```
-sudo npm install -g homebridge-control4-proxy@beta
+sudo npm install -g homebridge-control4-home-connect@beta
 ```
