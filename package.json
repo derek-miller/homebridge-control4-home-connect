@@ -1,15 +1,15 @@
 {
-  "displayName": "Homebridge Control4 Proxy",
-  "name": "homebridge-control4-proxy",
+  "displayName": "Homebridge Control4 Home Connect",
+  "name": "homebridge-control4-home-connect",
   "version": "0.0.12",
-  "description": "Homebridge plugin for proxying devices from a Control4 system.",
+  "description": "Homebridge plugin for connecting devices from a Control4 system.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/derek-miller/homebridge-control4-proxy.git"
+    "url": "https://github.com/derek-miller/homebridge-control4-home-connect.git"
   },
   "bugs": {
-    "url": "https://github.com/derek-miller/homebridge-control4-proxy/issues"
+    "url": "https://github.com/derek-miller/homebridge-control4-home-connect/issues"
   },
   "engines": {
     "node": ">=14.18.1",
