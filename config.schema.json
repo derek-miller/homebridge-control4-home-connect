@@ -1,5 +1,5 @@
 {
-  "pluginAlias": "Control4Proxy",
+  "pluginAlias": "Control4HomeConnect",
   "pluginType": "platform",
   "singular": true,
   "schema": {
