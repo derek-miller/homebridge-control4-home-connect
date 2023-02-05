@@ -146,6 +146,12 @@ type C4HCOutgoingMessage =
       };
     };
 
+const ADAPTIVE_LIGHTING_CHARACTERISTIC_NAMES = [
+  'SupportedCharacteristicValueTransitionConfiguration',
+  'CharacteristicValueTransitionControl',
+  'CharacteristicValueActiveTransitionCount',
+];
+
 export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service;
   public readonly Characteristic: typeof Characteristic;
@@ -438,19 +444,21 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
         }
         characteristicsDefinition[characteristicName] = 'default';
       }
-      const { error, addedCharacteristics = [] } = this.addCharacteristicsToService(
-        accessory,
-        service,
-        characteristicsDefinition,
-      );
+      const {
+        error,
+        addedCharacteristics = [],
+        adaptiveLightingConfigured = false,
+      } = this.addCharacteristicsToService(accessory, service, characteristicsDefinition);
       if (error) {
         return { error };
       }
-      // Remove any cached services that were orphaned.
+      // Remove any cached characteristics that were orphaned.
       service.characteristics
         .filter(
           (characteristic) =>
             characteristic.constructor.name !== 'Name' &&
+            (!adaptiveLightingConfigured ||
+              !ADAPTIVE_LIGHTING_CHARACTERISTIC_NAMES.includes(characteristic.constructor.name)) &&
             !addedCharacteristics.some((c) => Object.is(c, characteristic)),
         )
         .forEach((characteristic) => {
@@ -483,7 +491,11 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
     service: Service,
     characteristics: C4HCCharacteristicsDefinition,
     addedCharacteristics?: Characteristic[],
-  ): { error?: string; addedCharacteristics?: Characteristic[] } {
+  ): {
+    error?: string;
+    addedCharacteristics?: Characteristic[];
+    adaptiveLightingConfigured?: boolean;
+  } {
     addedCharacteristics = addedCharacteristics ?? [];
     const serviceName = service.constructor.name;
     for (const [characteristicName, characteristicPropertiesDefinition] of Object.entries(
@@ -528,6 +540,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
       if (
         serviceName !== 'AccessoryInformation' &&
         characteristicName !== 'Name' &&
+        !ADAPTIVE_LIGHTING_CHARACTERISTIC_NAMES.includes(characteristicName) &&
         characteristic.props.perms.includes(Perms.PAIRED_READ)
       ) {
         characteristic.onGet(() => this.onGet(accessory, service, characteristic));
@@ -535,6 +548,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
       if (
         serviceName !== 'AccessoryInformation' &&
         characteristicName !== 'Name' &&
+        !ADAPTIVE_LIGHTING_CHARACTERISTIC_NAMES.includes(characteristicName) &&
         characteristic.props.perms.includes(Perms.PAIRED_WRITE)
       ) {
         characteristic.onSet((value) => this.onSet(accessory, service, characteristic, value));
@@ -552,31 +566,25 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
         characteristic.updateValue(value);
       }
     }
-    // Check is we can configure adaptive lighting
+    // Check if we can configure adaptive lighting
+    let adaptiveLightingConfigured = false;
     if (
       serviceName === 'Lightbulb' &&
       service.testCharacteristic(this.Characteristic.Brightness) &&
       service.testCharacteristic(this.Characteristic.ColorTemperature)
     ) {
-      const adaptiveLightingController = new this.api.hap.AdaptiveLightingController(service, {
-        controllerMode: this.api.hap.AdaptiveLightingControllerMode.AUTOMATIC,
-      });
+      adaptiveLightingConfigured = true;
       try {
-        accessory.configureController(adaptiveLightingController);
+        accessory.configureController(
+          new this.api.hap.AdaptiveLightingController(service, {
+            controllerMode: this.api.hap.AdaptiveLightingControllerMode.AUTOMATIC,
+          }),
+        );
       } catch (e) {
         // Already configured
       }
-      for (const alCharacteristic of [
-        this.Characteristic.SupportedCharacteristicValueTransitionConfiguration,
-        this.Characteristic.CharacteristicValueTransitionControl,
-        this.Characteristic.CharacteristicValueActiveTransitionCount,
-      ]) {
-        if (service.testCharacteristic(alCharacteristic)) {
-          addedCharacteristics.push(service.getCharacteristic(alCharacteristic));
-        }
-      }
     }
-    return { addedCharacteristics };
+    return { addedCharacteristics, adaptiveLightingConfigured };
   }
 
   removeAccessory(
