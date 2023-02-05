@@ -552,6 +552,30 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
         characteristic.updateValue(value);
       }
     }
+    // Check is we can configure adaptive lighting
+    if (
+      serviceName === 'Lightbulb' &&
+      service.testCharacteristic(this.Characteristic.Brightness) &&
+      service.testCharacteristic(this.Characteristic.ColorTemperature)
+    ) {
+      const adaptiveLightingController = new this.api.hap.AdaptiveLightingController(service, {
+        controllerMode: this.api.hap.AdaptiveLightingControllerMode.AUTOMATIC,
+      });
+      try {
+        accessory.configureController(adaptiveLightingController);
+      } catch (e) {
+        // Already configured
+      }
+      for (const alCharacteristic of [
+        this.Characteristic.SupportedCharacteristicValueTransitionConfiguration,
+        this.Characteristic.CharacteristicValueTransitionControl,
+        this.Characteristic.CharacteristicValueActiveTransitionCount,
+      ]) {
+        if (service.testCharacteristic(alCharacteristic)) {
+          addedCharacteristics.push(service.getCharacteristic(alCharacteristic));
+        }
+      }
+    }
     return { addedCharacteristics };
   }
 
