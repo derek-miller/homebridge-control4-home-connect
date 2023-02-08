@@ -1,8 +1,10 @@
 import {
+  AdaptiveLightingController,
   API,
   APIEvent,
   Characteristic,
   CharacteristicValue,
+  HAPStatus,
   DynamicPlatformPlugin,
   HapStatusError,
   Logger,
@@ -15,7 +17,6 @@ import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createServer, Server } from 'http';
 import { CharacteristicProps, Perms } from 'hap-nodejs/dist/lib/Characteristic';
-import { HAPStatus } from 'hap-nodejs/dist/lib/HAPServer';
 
 type C4HCHomebridgePlatformConfig = PlatformConfig & { port: number };
 
@@ -89,6 +90,9 @@ type C4HCCharacteristicDefinition = {
 
 interface C4HCPlatformAccessoryContext {
   definition: C4HCAccessoryDefinition;
+  adaptiveLightingControllers?: {
+    [key: string]: AdaptiveLightingController;
+  };
 }
 
 type C4HCIncomingAddMessagePayload = C4HCIncomingCommonMessagePayload & C4HCAccessoryDefinition;
@@ -157,7 +161,9 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
   public readonly Characteristic: typeof Characteristic;
 
   // this is used to track restored cached accessories
-  public readonly accessories: Map<string, PlatformAccessory> = new Map();
+  public readonly accessories: Map<string, PlatformAccessory<C4HCPlatformAccessoryContext>> =
+    new Map();
+
   public readonly characteristicValueCache: Map<string, CharacteristicValue | HapStatusError> =
     new Map();
 
@@ -179,7 +185,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
     this.api.on(APIEvent.DID_FINISH_LAUNCHING, async () => this.startup());
   }
 
-  configureAccessory(accessory: PlatformAccessory) {
+  configureAccessory(accessory: PlatformAccessory<C4HCPlatformAccessoryContext>) {
     this.log.info('Loading accessory from cache:', accessory.displayName);
     this.accessories.set(accessory.UUID, accessory);
     this.addAccessory(accessory.context.definition);
@@ -247,7 +253,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
   }
 
   onGet(
-    accessory: PlatformAccessory,
+    accessory: PlatformAccessory<C4HCPlatformAccessoryContext>,
     service: Service,
     characteristic: Characteristic,
   ): CharacteristicValue {
@@ -276,7 +282,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
   }
 
   onSet(
-    accessory: PlatformAccessory,
+    accessory: PlatformAccessory<C4HCPlatformAccessoryContext>,
     service: Service,
     characteristic: Characteristic,
     value: CharacteristicValue,
@@ -377,7 +383,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
   }
 
   addServicesToAccessory(
-    accessory: PlatformAccessory,
+    accessory: PlatformAccessory<C4HCPlatformAccessoryContext>,
     servicesDefinition: C4HCServicesDefinition,
     parentService?: Service,
     addedServices?: Service[],
@@ -444,11 +450,11 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
         }
         characteristicsDefinition[characteristicName] = 'default';
       }
-      const {
-        error,
-        addedCharacteristics = [],
-        adaptiveLightingConfigured = false,
-      } = this.addCharacteristicsToService(accessory, service, characteristicsDefinition);
+      const { error, addedCharacteristics = [] } = this.addCharacteristicsToService(
+        accessory,
+        service,
+        characteristicsDefinition,
+      );
       if (error) {
         return { error };
       }
@@ -457,7 +463,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
         .filter(
           (characteristic) =>
             characteristic.constructor.name !== 'Name' &&
-            (!adaptiveLightingConfigured ||
+            (!accessory.context.adaptiveLightingControllers?.[service.getServiceId()] ||
               !ADAPTIVE_LIGHTING_CHARACTERISTIC_NAMES.includes(characteristic.constructor.name)) &&
             !addedCharacteristics.some((c) => Object.is(c, characteristic)),
         )
@@ -487,14 +493,13 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
   }
 
   addCharacteristicsToService(
-    accessory: PlatformAccessory,
+    accessory: PlatformAccessory<C4HCPlatformAccessoryContext>,
     service: Service,
     characteristics: C4HCCharacteristicsDefinition,
     addedCharacteristics?: Characteristic[],
   ): {
     error?: string;
     addedCharacteristics?: Characteristic[];
-    adaptiveLightingConfigured?: boolean;
   } {
     addedCharacteristics = addedCharacteristics ?? [];
     const serviceName = service.constructor.name;
@@ -567,24 +572,32 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
       }
     }
     // Check if we can configure adaptive lighting
-    let adaptiveLightingConfigured = false;
     if (
       serviceName === 'Lightbulb' &&
       service.testCharacteristic(this.Characteristic.Brightness) &&
       service.testCharacteristic(this.Characteristic.ColorTemperature)
     ) {
-      adaptiveLightingConfigured = true;
+      if (!accessory.context.adaptiveLightingControllers) {
+        accessory.context.adaptiveLightingControllers = {};
+      }
+      const controller =
+        accessory.context.adaptiveLightingControllers[service.getServiceId()] ||
+        new this.api.hap.AdaptiveLightingController(service, {
+          controllerMode: this.api.hap.AdaptiveLightingControllerMode.AUTOMATIC,
+        });
+      accessory.context.adaptiveLightingControllers[service.getServiceId()] = controller;
       try {
-        accessory.configureController(
-          new this.api.hap.AdaptiveLightingController(service, {
-            controllerMode: this.api.hap.AdaptiveLightingControllerMode.AUTOMATIC,
-          }),
-        );
+        accessory.configureController(controller);
       } catch (e) {
         // Already configured
       }
+    } else if (accessory.context.adaptiveLightingControllers?.[service.getServiceId()]) {
+      const controller = accessory.context.adaptiveLightingControllers[service.getServiceId()];
+      controller.disableAdaptiveLighting();
+      accessory.removeController(controller);
+      delete accessory.context.adaptiveLightingControllers[service.getServiceId()];
     }
-    return { addedCharacteristics, adaptiveLightingConfigured };
+    return { addedCharacteristics };
   }
 
   removeAccessory(
@@ -691,8 +704,24 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
       value = new this.api.hap.HapStatusError(value);
     }
 
-    this.characteristicValueCache.set(cacheKey(accessory, service, characteristic), value);
-    characteristic.updateValue(value);
+    if (
+      payload.service === 'Lightbulb' &&
+      payload.characteristic === 'CharacteristicValueTransitionControl'
+    ) {
+      if (
+        !value &&
+        accessory.context.adaptiveLightingControllers?.[
+          service.getServiceId()
+        ]?.isAdaptiveLightingActive()
+      ) {
+        accessory.context.adaptiveLightingControllers[
+          service.getServiceId()
+        ].disableAdaptiveLighting();
+      }
+    } else {
+      this.characteristicValueCache.set(cacheKey(accessory, service, characteristic), value);
+      characteristic.updateValue(value);
+    }
 
     return {
       ack: true,
@@ -714,7 +743,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
 }
 
 function cacheKey(
-  accessory: PlatformAccessory,
+  accessory: PlatformAccessory<C4HCPlatformAccessoryContext>,
   service: Service,
   characteristic: Characteristic,
 ): string {
