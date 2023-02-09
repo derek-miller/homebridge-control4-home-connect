@@ -6,10 +6,10 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/derek-miller/homebridge-control4-home-connect.git"
+    "url": "https://github.com/finitelabs/homebridge-control4-home-connect.git"
   },
   "bugs": {
-    "url": "https://github.com/derek-miller/homebridge-control4-home-connect/issues"
+    "url": "https://github.com/finitelabs/homebridge-control4-home-connect/issues"
   },
   "engines": {
     "node": ">=14.18.1",
