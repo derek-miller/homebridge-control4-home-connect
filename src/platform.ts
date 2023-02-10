@@ -698,7 +698,9 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
       };
     }
 
+    let hapStatusError: string | null = null;
     if (typeof value === 'number' && isOfTypeHAPStatus(value)) {
+      hapStatusError = getHAPStatusName(value);
       value = new this.api.hap.HapStatusError(value);
     }
 
@@ -720,7 +722,9 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
 
     return {
       ack: true,
-      message: `set '${accessory.displayName}' ${payload.service}.${payload.characteristic} -> ${value}`,
+      message: `set '${accessory.displayName}' ${payload.service}.${payload.characteristic} -> ${
+        hapStatusError || value
+      }`,
       response: payload,
     };
   }
@@ -760,4 +764,33 @@ function isOfTypeHAPStatus(status: number): status is HAPStatus {
     status === HAPStatus.INSUFFICIENT_AUTHORIZATION ||
     status === HAPStatus.NOT_ALLOWED_IN_CURRENT_STATE
   );
+}
+
+function getHAPStatusName(status: HAPStatus): string | null {
+  switch (status) {
+    case HAPStatus.INSUFFICIENT_AUTHORIZATION:
+      return 'INSUFFICIENT_AUTHORIZATION';
+    case HAPStatus.SERVICE_COMMUNICATION_FAILURE:
+      return 'SERVICE_COMMUNICATION_FAILURE';
+    case HAPStatus.RESOURCE_BUSY:
+      return 'RESOURCE_BUSY';
+    case HAPStatus.READ_ONLY_CHARACTERISTIC:
+      return 'READ_ONLY_CHARACTERISTIC';
+    case HAPStatus.WRITE_ONLY_CHARACTERISTIC:
+      return 'WRITE_ONLY_CHARACTERISTIC';
+    case HAPStatus.NOTIFICATION_NOT_SUPPORTED:
+      return 'NOTIFICATION_NOT_SUPPORTED';
+    case HAPStatus.OUT_OF_RESOURCE:
+      return 'OUT_OF_RESOURCE';
+    case HAPStatus.OPERATION_TIMED_OUT:
+      return 'OPERATION_TIMED_OUT';
+    case HAPStatus.RESOURCE_DOES_NOT_EXIST:
+      return 'RESOURCE_DOES_NOT_EXIST';
+    case HAPStatus.INVALID_VALUE_IN_REQUEST:
+      return 'INVALID_VALUE_IN_REQUEST';
+    case HAPStatus.NOT_ALLOWED_IN_CURRENT_STATE:
+      return 'NOT_ALLOWED_IN_CURRENT_STATE';
+    default:
+      return null;
+  }
 }
