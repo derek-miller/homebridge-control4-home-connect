@@ -46,7 +46,7 @@ type C4HCIncomingSetMessagePayload = C4HCIncomingCommonMessagePayload & {
   name: string;
   service: string;
   characteristic: string;
-  value: CharacteristicValue | HapStatusError;
+  value: CharacteristicValue;
   identifier?: CharacteristicValue | null;
 };
 
@@ -563,11 +563,15 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
         value !== 'default' &&
         (Array.isArray(value) || typeof value !== 'object')
       ) {
+        let hapStatusError: HapStatusError | null = null;
+        if (isHAPStatus(value)) {
+          hapStatusError = new this.api.hap.HapStatusError(value);
+        }
         this.characteristicValueCache.set(
           cacheKey(accessory, service, characteristic),
-          <CharacteristicValue>value,
+          hapStatusError || <CharacteristicValue>value,
         );
-        characteristic.updateValue(value);
+        characteristic.updateValue(hapStatusError || value);
       }
     }
     // Check if we can configure adaptive lighting
@@ -689,7 +693,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
       };
     }
 
-    let value = payload.value;
+    const value: CharacteristicValue = payload.value;
     if (value === null || value === undefined) {
       return {
         ack: false,
@@ -698,10 +702,9 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
       };
     }
 
-    let hapStatusError: string | null = null;
-    if (typeof value === 'number' && isOfTypeHAPStatus(value)) {
-      hapStatusError = getHAPStatusName(value);
-      value = new this.api.hap.HapStatusError(value);
+    let hapStatusError: HapStatusError | null = null;
+    if (isHAPStatus(value)) {
+      hapStatusError = new this.api.hap.HapStatusError(value);
     }
 
     if (
@@ -716,14 +719,17 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
         this.adaptiveLightingControllers.get(service.getServiceId())?.disableAdaptiveLighting();
       }
     } else {
-      this.characteristicValueCache.set(cacheKey(accessory, service, characteristic), value);
-      characteristic.updateValue(value);
+      this.characteristicValueCache.set(
+        cacheKey(accessory, service, characteristic),
+        hapStatusError || value,
+      );
+      characteristic.updateValue(hapStatusError || value);
     }
 
     return {
       ack: true,
       message: `set '${accessory.displayName}' ${payload.service}.${payload.characteristic} -> ${
-        hapStatusError || value
+        hapStatusError ? getHAPStatusName(hapStatusError.hapStatus) : value
       }`,
       response: payload,
     };
@@ -749,20 +755,21 @@ function cacheKey(
   return `${accessory.UUID}:${service.UUID}|${service.subtype ?? ''}:${characteristic.UUID}`;
 }
 
-function isOfTypeHAPStatus(status: number): status is HAPStatus {
+function isHAPStatus(status: CharacteristicValue): status is HAPStatus {
   return (
-    status === HAPStatus.INSUFFICIENT_PRIVILEGES ||
-    status === HAPStatus.SERVICE_COMMUNICATION_FAILURE ||
-    status === HAPStatus.RESOURCE_BUSY ||
-    status === HAPStatus.READ_ONLY_CHARACTERISTIC ||
-    status === HAPStatus.WRITE_ONLY_CHARACTERISTIC ||
-    status === HAPStatus.NOTIFICATION_NOT_SUPPORTED ||
-    status === HAPStatus.OUT_OF_RESOURCE ||
-    status === HAPStatus.OPERATION_TIMED_OUT ||
-    status === HAPStatus.RESOURCE_DOES_NOT_EXIST ||
-    status === HAPStatus.INVALID_VALUE_IN_REQUEST ||
-    status === HAPStatus.INSUFFICIENT_AUTHORIZATION ||
-    status === HAPStatus.NOT_ALLOWED_IN_CURRENT_STATE
+    typeof status === 'number' &&
+    (status === HAPStatus.INSUFFICIENT_PRIVILEGES ||
+      status === HAPStatus.SERVICE_COMMUNICATION_FAILURE ||
+      status === HAPStatus.RESOURCE_BUSY ||
+      status === HAPStatus.READ_ONLY_CHARACTERISTIC ||
+      status === HAPStatus.WRITE_ONLY_CHARACTERISTIC ||
+      status === HAPStatus.NOTIFICATION_NOT_SUPPORTED ||
+      status === HAPStatus.OUT_OF_RESOURCE ||
+      status === HAPStatus.OPERATION_TIMED_OUT ||
+      status === HAPStatus.RESOURCE_DOES_NOT_EXIST ||
+      status === HAPStatus.INVALID_VALUE_IN_REQUEST ||
+      status === HAPStatus.INSUFFICIENT_AUTHORIZATION ||
+      status === HAPStatus.NOT_ALLOWED_IN_CURRENT_STATE)
   );
 }
 
