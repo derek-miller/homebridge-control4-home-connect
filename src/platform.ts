@@ -65,6 +65,9 @@ type C4HCAccessoryDefinition = {
   category?: number;
   external?: boolean;
   services: C4HCServicesDefinition;
+  options?: {
+    defaultOnBrightness?: number;
+  };
 };
 
 type C4HCServicesDefinition = {
@@ -163,6 +166,8 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
 
   private readonly characteristicValueCache: Map<string, CharacteristicValue | HapStatusError> =
     new Map();
+
+  private readonly ignoreNextFullBrightness: Map<string, boolean> = new Map();
 
   private readonly adaptiveLightingControllers: Map<string, AdaptiveLightingController> = new Map();
 
@@ -280,13 +285,38 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
     return cachedValue;
   }
 
-  onSet(
+  async onSet(
     accessory: PlatformAccessory<C4HCPlatformAccessoryContext>,
     service: Service,
     characteristic: Characteristic,
     value: CharacteristicValue,
   ) {
-    this.characteristicValueCache.set(cacheKey(accessory, service, characteristic), value);
+    const key = cacheKey(accessory, service, characteristic);
+    if (
+      service instanceof this.Service.Lightbulb &&
+      characteristic instanceof this.Characteristic.Brightness &&
+      value === 100
+    ) {
+      // Give HomeKit time to send any associated "On" commands
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (this.ignoreNextFullBrightness.delete(key)) {
+        return;
+      }
+    }
+    // If this is a light with a brightness and is turning on, use the default brightness
+    if (
+      service instanceof this.Service.Lightbulb &&
+      characteristic instanceof this.Characteristic.On &&
+      !this.characteristicValueCache.get(key) &&
+      value &&
+      service.testCharacteristic(this.Characteristic.Brightness) &&
+      accessory.context.definition?.options?.defaultOnBrightness
+    ) {
+      const brightness = service.getCharacteristic(this.Characteristic.Brightness);
+      this.ignoreNextFullBrightness.set(cacheKey(accessory, service, brightness), true);
+      brightness.setValue(accessory.context.definition.options.defaultOnBrightness);
+    }
+    this.characteristicValueCache.set(key, value);
     this.send({
       topic: 'set-request',
       payload: {
@@ -576,6 +606,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
     }
     // Check if we can configure adaptive lighting
     if (
+      this.api.hap.AdaptiveLightingController &&
       serviceName === 'Lightbulb' &&
       service.testCharacteristic(this.Characteristic.Brightness) &&
       service.testCharacteristic(this.Characteristic.ColorTemperature)
