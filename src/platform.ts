@@ -36,6 +36,10 @@ type C4HCIncomingMessage =
   | {
       topic: 'remove-request';
       payload: C4HCIncomingRemoveMessagePayload;
+    }
+  | {
+      topic: string;
+      payload: never;
     };
 
 interface C4HCIncomingCommonMessagePayload {
@@ -203,8 +207,14 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
           return;
         }
         this.log.debug('receive: %s', data);
-        const message = JSON.parse(data.toString());
-        if (!message.topic || !message.payload) {
+        let message;
+        try {
+          message = JSON.parse(data.toString());
+        } catch (e) {
+          // Invalid message is handled below
+        }
+        if (!message?.topic || !message?.payload) {
+          this.log.warn("received invalid message '%s'", data.toString());
           return;
         }
         this.send(this.onMessage(<C4HCIncomingMessage>message));
@@ -214,7 +224,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
         this.characteristicValueCache.clear();
       });
       this.wsConnection.on('error', (e) => {
-        this.log.error('error: %s', e.message);
+        this.log.error('websocket error: %s', e.message);
       });
       this.log.info('client ip %s connected', req.socket.remoteAddress);
     });
@@ -244,13 +254,13 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
           payload: this.setValue(message.payload),
         };
       default:
-        this.log.warn("Invalid message topic '%s'", message['topic']);
+        this.log.warn("received message with an unknown topic '%s'", message.topic);
         return {
           topic: 'response',
-          payload: {
+          payload: <C4HCOutgoingMessagePayload<never>>{
             ack: false,
-            message: `invalid message topic '${message['topic']}'`,
-            response: message['payload'],
+            message: `invalid message topic '${message.topic}'`,
+            response: message.payload,
           },
         };
     }
@@ -806,8 +816,8 @@ function isHAPStatus(status: CharacteristicValue): status is HAPStatus {
 
 function getHAPStatusName(status: HAPStatus): string | null {
   switch (status) {
-    case HAPStatus.INSUFFICIENT_AUTHORIZATION:
-      return 'INSUFFICIENT_AUTHORIZATION';
+    case HAPStatus.INSUFFICIENT_PRIVILEGES:
+      return 'INSUFFICIENT_PRIVILEGES';
     case HAPStatus.SERVICE_COMMUNICATION_FAILURE:
       return 'SERVICE_COMMUNICATION_FAILURE';
     case HAPStatus.RESOURCE_BUSY:
@@ -826,6 +836,8 @@ function getHAPStatusName(status: HAPStatus): string | null {
       return 'RESOURCE_DOES_NOT_EXIST';
     case HAPStatus.INVALID_VALUE_IN_REQUEST:
       return 'INVALID_VALUE_IN_REQUEST';
+    case HAPStatus.INSUFFICIENT_AUTHORIZATION:
+      return 'INSUFFICIENT_AUTHORIZATION';
     case HAPStatus.NOT_ALLOWED_IN_CURRENT_STATE:
       return 'NOT_ALLOWED_IN_CURRENT_STATE';
     default:
