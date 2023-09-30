@@ -17,36 +17,42 @@ import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createServer, Server } from 'http';
 import { CharacteristicProps, Perms } from 'hap-nodejs/dist/lib/Characteristic';
+import { CameraConfig, StreamingDelegate } from './camera/streamingDelegate';
+import { FfmpegCodecs } from './camera/ffmpeg-codecs';
 
-type C4HCHomebridgePlatformConfig = PlatformConfig & { port: number };
+export type C4HCHomebridgePlatformConfig = PlatformConfig & { port: number };
 
 type C4HCIncomingMessage =
   | {
       topic: 'set-request';
-      payload: C4HCIncomingSetMessagePayload;
+      payload: C4HCSetRequestPayload;
     }
   | {
       topic: 'get-request';
-      payload: C4HCIncomingGetMessagePayload;
+      payload: C4HCGetRequestPayload;
     }
   | {
       topic: 'add-request';
-      payload: C4HCIncomingAddMessagePayload;
+      payload: C4HCAddRequestPayload;
     }
   | {
       topic: 'remove-request';
-      payload: C4HCIncomingRemoveMessagePayload;
+      payload: C4HCRemoveRequestPayload;
+    }
+  | {
+      topic: 'camera-support-request';
+      payload: never;
     }
   | {
       topic: string;
       payload: never;
     };
 
-interface C4HCIncomingCommonMessagePayload {
+interface C4HCCommonPayload {
   uuid: string;
 }
 
-type C4HCIncomingSetMessagePayload = C4HCIncomingCommonMessagePayload & {
+type C4HCSetRequestPayload = C4HCCommonPayload & {
   name: string;
   service: string;
   characteristic: string;
@@ -54,10 +60,11 @@ type C4HCIncomingSetMessagePayload = C4HCIncomingCommonMessagePayload & {
   identifier?: CharacteristicValue | null;
 };
 
-type C4HCIncomingGetMessagePayload = C4HCIncomingCommonMessagePayload & {
+type C4HCGetRequestPayload = C4HCCommonPayload & {
   name: string;
   service: string;
   characteristic: string;
+  identifier?: CharacteristicValue;
 };
 
 /**
@@ -71,6 +78,7 @@ type C4HCAccessoryDefinition = {
   services: C4HCServicesDefinition;
   options?: {
     defaultOnBrightness?: number;
+    camera?: CameraConfig;
   };
 };
 
@@ -95,15 +103,19 @@ type C4HCCharacteristicDefinition = {
   props?: CharacteristicProps;
 };
 
-interface C4HCPlatformAccessoryContext {
+export interface C4HCPlatformAccessoryContext {
   definition: C4HCAccessoryDefinition;
 }
 
-type C4HCIncomingAddMessagePayload = C4HCIncomingCommonMessagePayload & C4HCAccessoryDefinition;
+type C4HCAddRequestPayload = C4HCCommonPayload & C4HCAccessoryDefinition;
 
-type C4HCIncomingRemoveMessagePayload = C4HCIncomingCommonMessagePayload;
+type C4HCRemoveRequestPayload = C4HCCommonPayload;
 
-interface C4HCOutgoingMessagePayload<T> {
+type C4HCCameraSupportResponse = {
+  codecs: { [index: string]: { decoders: string[]; encoders: string[] } };
+};
+
+interface C4HCResponsePayload<T> {
   ack: boolean;
   message: string;
   response: T;
@@ -112,47 +124,47 @@ interface C4HCOutgoingMessagePayload<T> {
 type C4HCOutgoingMessage =
   | {
       topic: 'response';
-      payload: C4HCOutgoingMessagePayload<never>;
+      payload: C4HCResponsePayload<never>;
     }
   | {
       topic: 'add-response';
-      payload: C4HCOutgoingMessagePayload<C4HCAccessoryDefinition>;
+      payload: C4HCResponsePayload<C4HCAccessoryDefinition>;
     }
   | {
       topic: 'remove-response';
-      payload: C4HCOutgoingMessagePayload<C4HCIncomingRemoveMessagePayload | null>;
+      payload: C4HCResponsePayload<C4HCRemoveRequestPayload | null>;
     }
   | {
       topic: 'get-response';
-      payload: C4HCOutgoingMessagePayload<{
-        [key: string]: C4HCAccessoryDefinition;
+      payload: C4HCResponsePayload<{
+        [uuid: string]: C4HCAccessoryDefinition;
       }>;
     }
   | {
       topic: 'set-response';
-      payload: C4HCOutgoingMessagePayload<C4HCIncomingSetMessagePayload>;
+      payload: C4HCResponsePayload<C4HCSetRequestPayload>;
     }
   | {
       topic: 'get-request';
-      payload: {
-        uuid: string;
-        name?: string;
-        service: string;
-        characteristic: string;
-        identifier?: CharacteristicValue;
-      };
+      payload: C4HCGetRequestPayload;
     }
   | {
       topic: 'set-request';
-      payload: {
-        uuid: string;
-        name?: string;
-        service: string;
-        characteristic: string;
-        value: CharacteristicValue;
-        identifier?: CharacteristicValue;
-      };
+      payload: C4HCSetRequestPayload;
+    }
+  | {
+      topic: 'camera-support-response';
+      payload: C4HCResponsePayload<C4HCCameraSupportResponse>;
     };
+
+const CAMERA_SERVICE_NAMES = [
+  'CameraOperatingMode',
+  'CameraRecordingManagement',
+  'CameraRTPStreamManagement',
+  'DataStreamTransportManagement',
+  'Microphone',
+  'Speaker',
+];
 
 const ADAPTIVE_LIGHTING_CHARACTERISTIC_NAMES = [
   'SupportedCharacteristicValueTransitionConfiguration',
@@ -174,10 +186,12 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
   private readonly ignoreNextFullBrightness: Map<string, boolean> = new Map();
 
   private readonly adaptiveLightingControllers: Map<string, AdaptiveLightingController> = new Map();
+  private readonly cameraStreamingDelegates: Map<string, StreamingDelegate> = new Map();
 
   private readonly config: C4HCHomebridgePlatformConfig;
   private readonly server: Server;
   private readonly ws: WebSocketServer;
+  private readonly ffmpegCodecs: FfmpegCodecs;
   private wsConnection: WebSocket | null = null;
 
   constructor(
@@ -190,6 +204,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
     this.config = <C4HCHomebridgePlatformConfig>this.platformConfig;
     this.server = createServer();
     this.ws = new WebSocketServer({ server: this.server });
+    this.ffmpegCodecs = new FfmpegCodecs(this.log);
     this.api.on(APIEvent.DID_FINISH_LAUNCHING, async () => this.startup());
   }
 
@@ -199,10 +214,10 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
     this.addAccessory(accessory.context.definition);
   }
 
-  async startup() {
+  startup() {
     this.ws.on('connection', (ws, req) => {
       this.wsConnection = ws;
-      this.wsConnection.on('message', (data) => {
+      this.wsConnection.on('message', async (data) => {
         if (!data) {
           return;
         }
@@ -217,7 +232,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
           this.log.warn("received invalid message '%s'", data.toString());
           return;
         }
-        this.send(this.onMessage(<C4HCIncomingMessage>message));
+        this.send(await this.onMessage(<C4HCIncomingMessage>message));
       });
       this.wsConnection.on('close', () => {
         this.log.info('client ip %s disconnected', req.socket.remoteAddress);
@@ -231,7 +246,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
     this.server.listen(this.config.port);
   }
 
-  onMessage(message: C4HCIncomingMessage): C4HCOutgoingMessage {
+  async onMessage(message: C4HCIncomingMessage): Promise<C4HCOutgoingMessage> {
     switch (message.topic) {
       case 'add-request':
         return {
@@ -253,11 +268,16 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
           topic: 'set-response',
           payload: this.setValue(message.payload),
         };
+      case 'camera-support-request':
+        return {
+          topic: 'camera-support-response',
+          payload: await this.cameraSupport(),
+        };
       default:
         this.log.warn("received message with an unknown topic '%s'", message.topic);
         return {
           topic: 'response',
-          payload: <C4HCOutgoingMessagePayload<never>>{
+          payload: <C4HCResponsePayload<never>>{
             ack: false,
             message: `invalid message topic '${message.topic}'`,
             response: message.payload,
@@ -342,16 +362,14 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
     });
   }
 
-  addAccessory(
-    payload: C4HCIncomingAddMessagePayload,
-  ): C4HCOutgoingMessagePayload<C4HCIncomingAddMessagePayload> {
+  addAccessory(payload: C4HCAddRequestPayload): C4HCResponsePayload<C4HCAddRequestPayload> {
     let ack = false,
       message;
     const name = payload.name;
     const uuid = payload.uuid;
     const serviceNames = Object.keys(payload?.services ?? {});
     const unknownServiceNames = serviceNames.filter((s) => !this.Service[s]);
-    if (serviceNames.length === 0) {
+    if (serviceNames.length === 0 && !payload.options?.camera) {
       message = 'accessories must contain at least 1 service';
     } else if (unknownServiceNames.length > 0) {
       message = 'unknown service(s): ' + unknownServiceNames.join(', ');
@@ -379,18 +397,31 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
           this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
         }
       } else {
+        let delegate = this.cameraStreamingDelegates.get(accessory.UUID);
+        if (delegate) {
+          accessory.removeController(delegate.controller);
+          this.cameraStreamingDelegates.delete(accessory.UUID);
+        }
+        if (accessory.context.definition.options?.camera) {
+          delegate = new StreamingDelegate(this.log, this.api, this, accessory);
+          accessory.configureController(delegate.controller);
+          this.cameraStreamingDelegates.set(accessory.UUID, delegate);
+        }
         // Remove any cached services that were orphaned.
         accessory.services
           .filter(
             (service) =>
               !['AccessoryInformation', 'ProtocolInformation', 'HOOBS'].includes(
                 service.constructor.name,
-              ) && !addedServices.some((s) => Object.is(s, service)),
+              ) &&
+              (!this.cameraStreamingDelegates.has(accessory.UUID) ||
+                !CAMERA_SERVICE_NAMES.includes(service.constructor.name)) &&
+              !addedServices.some((s) => Object.is(s, service)),
           )
           .forEach((service) => {
             this.log.info(
               'Removing orphaned service %s from %s',
-              service.displayName || service.constructor.name,
+              service.constructor.name,
               accessory.displayName || accessory.constructor.name,
             );
             accessory.removeService(service);
@@ -398,19 +429,21 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
         // Valid definition -> register or update the accessory
         ack = true;
         this.accessories.set(accessory.UUID, accessory);
-        if (payload.external) {
-          message = `added external accessory '${name}'`;
-          // Existing external accessories require a homebridge restart
-          if (!existingAccessory) {
+        if (existingAccessory) {
+          message = `updated ${payload.external ? 'external ' : ''}accessory '${name}'`;
+          if (!payload.external) {
+            this.api.updatePlatformAccessories([accessory]);
+          } else {
+            // TODO: Is there a way to update external accessories?
+          }
+        } else {
+          message = `added ${payload.external ? 'external ' : ''}accessory '${name}'`;
+          this.log.info('Adding new accessory:', name);
+          if (!payload.external) {
+            this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+          } else {
             this.api.publishExternalAccessories(PLUGIN_NAME, [accessory]);
           }
-        } else if (existingAccessory) {
-          message = `updated accessory '${name}'`;
-          this.api.updatePlatformAccessories([accessory]);
-        } else {
-          message = `added accessory '${name}'`;
-          this.log.info('Adding new accessory:', name);
-          this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
         }
       }
     }
@@ -509,7 +542,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
         .forEach((characteristic) => {
           this.log.info(
             'Removing orphaned characteristic %s from %s',
-            characteristic.displayName || characteristic.constructor.name,
+            characteristic.constructor.name,
             accessory.displayName || accessory.constructor.name,
           );
           service.removeCharacteristic(characteristic);
@@ -644,8 +677,8 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
   }
 
   removeAccessory(
-    payload: C4HCIncomingRemoveMessagePayload,
-  ): C4HCOutgoingMessagePayload<C4HCAccessoryDefinition | null> {
+    payload: C4HCRemoveRequestPayload,
+  ): C4HCResponsePayload<C4HCAccessoryDefinition | null> {
     const uuid = payload.uuid;
     const accessory = this.accessories.get(uuid);
     if (accessory) {
@@ -668,8 +701,8 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
   }
 
   getAccessories(
-    payload: C4HCIncomingGetMessagePayload,
-  ): C4HCOutgoingMessagePayload<{ [key: string]: C4HCAccessoryDefinition }> {
+    payload: C4HCGetRequestPayload,
+  ): C4HCResponsePayload<{ [key: string]: C4HCAccessoryDefinition }> {
     const accessories = {};
     for (const accessory of this.accessories.values()) {
       if (payload.uuid === 'all' || payload.uuid === accessory.UUID) {
@@ -683,9 +716,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
     };
   }
 
-  setValue(
-    payload: C4HCIncomingSetMessagePayload,
-  ): C4HCOutgoingMessagePayload<C4HCIncomingSetMessagePayload> {
+  setValue(payload: C4HCSetRequestPayload): C4HCResponsePayload<C4HCSetRequestPayload> {
     const uuid = payload?.uuid;
     const accessory = uuid && this.accessories.get(uuid);
     if (!accessory) {
@@ -776,10 +807,32 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
     };
   }
 
+  async cameraSupport(): Promise<C4HCResponsePayload<C4HCCameraSupportResponse>> {
+    try {
+      return {
+        ack: true,
+        message: 'camera support',
+        response: {
+          codecs: await this.ffmpegCodecs.getCodecs(),
+        },
+      };
+    } catch (e: unknown) {
+      const error = e as unknown as Error;
+      return {
+        ack: true,
+        message: `failed to probe for camera support: ${error.message}`,
+        response: {
+          codecs: {},
+        },
+      };
+    }
+  }
+
   send(message: C4HCOutgoingMessage) {
     if (this.wsConnection && this.wsConnection.OPEN) {
-      this.log.debug('send: %s', JSON.stringify(message, null, 2));
-      this.wsConnection.send(JSON.stringify(message), (error) => {
+      const data = JSON.stringify(message);
+      this.log.debug('send: %s', data);
+      this.wsConnection.send(data, (error) => {
         if (error) {
           this.log.error('send error; %s', error);
         }

@@ -33,19 +33,21 @@
     "control4"
   ],
   "dependencies": {
-    "ws": "^8.5.5"
+    "ffmpeg-for-homebridge": "^2.1.0",
+    "pick-port": "^1.0.1",
+    "ws": "^8.14.2"
   },
   "devDependencies": {
-    "@types/node": "^20.4.2",
-    "@types/ws": "^8.5.5",
-    "@typescript-eslint/eslint-plugin": "^6.1.0",
-    "@typescript-eslint/parser": "^6.1.0",
-    "eslint": "^8.45.0",
+    "@types/node": "^20.8.0",
+    "@types/ws": "^8.5.6",
+    "@typescript-eslint/eslint-plugin": "^6.7.3",
+    "@typescript-eslint/parser": "^6.7.3",
+    "eslint": "^8.50.0",
     "homebridge": "^1.6.1",
-    "homebridge-config-ui-x": "^4.50.4",
+    "homebridge-config-ui-x": "^4.50.6",
     "nodemon": "^3.0.1",
-    "prettier": "^3.0.0",
+    "prettier": "^3.0.3",
     "ts-node": "^10.9.1",
-    "typescript": "^5.1.6"
+    "typescript": "^5.2.2"
   }
 }
