@@ -1,7 +1,7 @@
 {
   "displayName": "Homebridge Control4 Home Connect",
   "name": "homebridge-control4-home-connect",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Homebridge plugin for connecting devices from a Control4 system.",
   "license": "Apache-2.0",
   "repository": {
