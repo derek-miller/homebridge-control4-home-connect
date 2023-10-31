@@ -83,7 +83,7 @@ type C4HCAccessoryDefinition = {
 };
 
 type C4HCServicesDefinition = {
-  [serviceName: string]: 'default' | C4HCServiceDefinition;
+  [serviceName: string]: 'default' | C4HCServiceDefinition | C4HCServiceDefinition[];
 };
 
 type C4HCServiceDefinition = {
@@ -461,104 +461,120 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
     addedServices?: Service[],
   ): { error?: string; addedServices?: Service[] } {
     addedServices = addedServices ?? [];
-    for (const [serviceName, serviceDefinition] of Object.entries(servicesDefinition)) {
-      const { characteristics: characteristicsDefinition, linkedServices = null } =
-        serviceDefinition === 'default'
-          ? { characteristics: <C4HCCharacteristicsDefinition>{} }
-          : serviceDefinition;
+    for (const [serviceName, serviceDefinitionOrDefinitions] of Object.entries(
+      servicesDefinition,
+    )) {
+      const serviceDefinitions = !Array.isArray(serviceDefinitionOrDefinitions)
+        ? [serviceDefinitionOrDefinitions]
+        : serviceDefinitionOrDefinitions;
+      const multipleServiceDefinitions = serviceDefinitions.length > 1;
+      for (const serviceDefinition of serviceDefinitions) {
+        const { characteristics: characteristicsDefinition, linkedServices = null } =
+          serviceDefinition === 'default'
+            ? { characteristics: <C4HCCharacteristicsDefinition>{} }
+            : serviceDefinition;
 
-      const idCharacteristic =
-        (<C4HCCharacteristicDefinition>characteristicsDefinition.Identifier)?.value ??
-        <'default' | CharacteristicValue>characteristicsDefinition.Identifier;
-      const identifier = typeof idCharacteristic !== 'number' ? null : idCharacteristic;
-      if (parentService && identifier === null) {
-        return {
-          error: 'linked services must contain an Identifier characteristic',
-        };
-      }
-
-      const nameCharacteristic =
-        (<C4HCCharacteristicDefinition>characteristicsDefinition.Name)?.value ??
-        <'default' | CharacteristicValue>characteristicsDefinition.Name ??
-        (<C4HCCharacteristicDefinition>characteristicsDefinition.ConfiguredName)?.value ??
-        <'default' | CharacteristicValue>characteristicsDefinition.ConfiguredName;
-      const displayName =
-        typeof nameCharacteristic !== 'string' || nameCharacteristic === 'default'
-          ? null
-          : nameCharacteristic;
-      if (parentService && displayName === null) {
-        return {
-          error: 'linked services must contain a Name or ConfiguredName characteristic',
-        };
-      }
-
-      const service =
-        serviceName === 'AccessoryInformation'
-          ? accessory.getService(this.Service.AccessoryInformation)
-          : accessory.getServiceById(
-              this.Service[serviceName],
-              `uuid=${accessory.UUID}|service=${serviceName}|id=${identifier ?? 'default'}`,
-            ) ||
-            accessory.addService(
-              this.Service[serviceName],
-              displayName ?? accessory.displayName,
-              `uuid=${accessory.UUID}|service=${serviceName}|id=${identifier ?? 'default'}`,
-            );
-      if (!service) {
-        return {
-          error: `unable to add service ${serviceName} to '${accessory.displayName}'`,
-        };
-      }
-      addedServices.push(service);
-
-      // Add any missing required characteristics
-      for (const requiredCharacteristic of service.characteristics) {
-        const characteristicName = requiredCharacteristic.constructor.name;
-        if (
-          characteristicName === 'Name' ||
-          characteristicsDefinition[characteristicName] !== undefined
-        ) {
-          continue;
+        const idCharacteristic =
+          (<C4HCCharacteristicDefinition>characteristicsDefinition.Identifier)?.value ??
+          <'default' | CharacteristicValue>characteristicsDefinition.Identifier;
+        const identifier = typeof idCharacteristic !== 'number' ? null : idCharacteristic;
+        if (parentService && identifier === null) {
+          return {
+            error: 'linked services must contain an Identifier characteristic',
+          };
         }
-        characteristicsDefinition[characteristicName] = 'default';
-      }
-      const { error, addedCharacteristics = [] } = this.addCharacteristicsToService(
-        accessory,
-        service,
-        characteristicsDefinition,
-      );
-      if (error) {
-        return { error };
-      }
-      // Remove any cached characteristics that were orphaned.
-      service.characteristics
-        .filter(
-          (characteristic) =>
-            characteristic.constructor.name !== 'Name' &&
-            (!this.adaptiveLightingControllers.has(service.getServiceId()) ||
-              !ADAPTIVE_LIGHTING_CHARACTERISTIC_NAMES.includes(characteristic.constructor.name)) &&
-            !addedCharacteristics.some((c) => Object.is(c, characteristic)),
-        )
-        .forEach((characteristic) => {
-          this.log.info(
-            'Removing orphaned characteristic %s from %s',
-            characteristic.constructor.name,
-            accessory.displayName || accessory.constructor.name,
-          );
-          service.removeCharacteristic(characteristic);
-        });
+        if (multipleServiceDefinitions && identifier === null) {
+          return {
+            error:
+              'when specifying multiple services, each must contain an Identifier characteristic',
+          };
+        }
 
-      if (parentService) {
-        parentService.addLinkedService(service);
-      }
+        const nameCharacteristic =
+          (<C4HCCharacteristicDefinition>characteristicsDefinition.Name)?.value ??
+          <'default' | CharacteristicValue>characteristicsDefinition.Name ??
+          (<C4HCCharacteristicDefinition>characteristicsDefinition.ConfiguredName)?.value ??
+          <'default' | CharacteristicValue>characteristicsDefinition.ConfiguredName;
+        const displayName =
+          typeof nameCharacteristic !== 'string' || nameCharacteristic === 'default'
+            ? null
+            : nameCharacteristic;
+        if (parentService && displayName === null) {
+          return {
+            error: 'linked services must contain a Name or ConfiguredName characteristic',
+          };
+        }
 
-      if (linkedServices !== null && !Array.isArray(linkedServices)) {
-        return {
-          error: `invalid type for service ${serviceName} linkedServices; expected an array`,
-        };
-      }
-      for (const linkedServicesDefinition of linkedServices ?? []) {
-        this.addServicesToAccessory(accessory, linkedServicesDefinition, service, addedServices);
+        const service =
+          serviceName === 'AccessoryInformation'
+            ? accessory.getService(this.Service.AccessoryInformation)
+            : accessory.getServiceById(
+                this.Service[serviceName],
+                `uuid=${accessory.UUID}|service=${serviceName}|id=${identifier ?? 'default'}`,
+              ) ||
+              accessory.addService(
+                this.Service[serviceName],
+                displayName ?? accessory.displayName,
+                `uuid=${accessory.UUID}|service=${serviceName}|id=${identifier ?? 'default'}`,
+              );
+        if (!service) {
+          return {
+            error: `unable to add service ${serviceName} to '${accessory.displayName}'`,
+          };
+        }
+        addedServices.push(service);
+
+        // Add any missing required characteristics
+        for (const requiredCharacteristic of service.characteristics) {
+          const characteristicName = requiredCharacteristic.constructor.name;
+          if (
+            characteristicName === 'Name' ||
+            characteristicsDefinition[characteristicName] !== undefined
+          ) {
+            continue;
+          }
+          characteristicsDefinition[characteristicName] = 'default';
+        }
+        const { error, addedCharacteristics = [] } = this.addCharacteristicsToService(
+          accessory,
+          service,
+          characteristicsDefinition,
+        );
+        if (error) {
+          return { error };
+        }
+        // Remove any cached characteristics that were orphaned.
+        service.characteristics
+          .filter(
+            (characteristic) =>
+              characteristic.constructor.name !== 'Name' &&
+              (!this.adaptiveLightingControllers.has(service.getServiceId()) ||
+                !ADAPTIVE_LIGHTING_CHARACTERISTIC_NAMES.includes(
+                  characteristic.constructor.name,
+                )) &&
+              !addedCharacteristics.some((c) => Object.is(c, characteristic)),
+          )
+          .forEach((characteristic) => {
+            this.log.info(
+              'Removing orphaned characteristic %s from %s',
+              characteristic.constructor.name,
+              accessory.displayName || accessory.constructor.name,
+            );
+            service.removeCharacteristic(characteristic);
+          });
+
+        if (parentService) {
+          parentService.addLinkedService(service);
+        }
+
+        if (linkedServices !== null && !Array.isArray(linkedServices)) {
+          return {
+            error: `invalid type for service ${serviceName} linkedServices; expected an array`,
+          };
+        }
+        for (const linkedServicesDefinition of linkedServices ?? []) {
+          this.addServicesToAccessory(accessory, linkedServicesDefinition, service, addedServices);
+        }
       }
     }
     return { addedServices };
