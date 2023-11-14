@@ -438,7 +438,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
           }
         } else {
           message = `added ${payload.external ? 'external ' : ''}accessory '${name}'`;
-          this.log.info('Adding new accessory:', name);
+          this.log.info(`Adding ${payload.external ? 'external ' : 'new'} accessory:`, name);
           if (!payload.external) {
             this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
           } else {
