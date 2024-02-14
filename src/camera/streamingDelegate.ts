@@ -23,7 +23,7 @@ import {
 import { spawn } from 'child_process';
 import { createSocket, Socket } from 'dgram';
 import ffmpegPath from 'ffmpeg-for-homebridge';
-import pickPort, { pickPortOptions } from 'pick-port';
+import { pickPort, Type } from 'pick-port';
 import { FfmpegProcess } from './ffmpeg';
 import { C4HCHomebridgePlatform, C4HCPlatformAccessoryContext } from '../platform';
 
@@ -350,8 +350,8 @@ export class StreamingDelegate implements CameraStreamingDelegate {
   ): Promise<void> {
     const ipv6 = request.addressVersion === 'ipv6';
 
-    const options: pickPortOptions = {
-      type: 'udp',
+    const options = {
+      type: <Type>'udp',
       ip: ipv6 ? '::' : '0.0.0.0',
       reserveTimeout: 15,
     };
