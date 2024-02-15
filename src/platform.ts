@@ -15,12 +15,19 @@ import {
 
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
 import { WebSocket, WebSocketServer } from 'ws';
-import { createServer, Server } from 'http';
+import basicAuth from 'basic-auth';
+import createCert from 'create-cert';
+import http from 'http';
+import https from 'https';
 import { CharacteristicProps, Perms } from 'hap-nodejs/dist/lib/Characteristic';
 import { CameraConfig, StreamingDelegate } from './camera/streamingDelegate';
 import { FfmpegCodecs } from './camera/ffmpeg-codecs';
 
-export type C4HCHomebridgePlatformConfig = PlatformConfig & { port: number };
+export type C4HCHomebridgePlatformConfig = PlatformConfig & {
+  port: number;
+  ssl?: boolean;
+  auth?: { username: string; password: string };
+};
 
 type C4HCIncomingMessage =
   | {
@@ -189,8 +196,6 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
   private readonly cameraStreamingDelegates: Map<string, StreamingDelegate> = new Map();
 
   private readonly config: C4HCHomebridgePlatformConfig;
-  private readonly server: Server;
-  private readonly ws: WebSocketServer;
   private readonly ffmpegCodecs: FfmpegCodecs;
   private wsConnection: WebSocket | null = null;
 
@@ -202,8 +207,6 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
     this.Service = this.api.hap.Service;
     this.Characteristic = this.api.hap.Characteristic;
     this.config = <C4HCHomebridgePlatformConfig>this.platformConfig;
-    this.server = createServer();
-    this.ws = new WebSocketServer({ server: this.server });
     this.ffmpegCodecs = new FfmpegCodecs(this.log);
     this.api.on(APIEvent.DID_FINISH_LAUNCHING, async () => this.startup());
   }
@@ -214,8 +217,32 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
     this.addAccessory(accessory.context.definition);
   }
 
-  startup() {
-    this.ws.on('connection', (ws, req) => {
+  async startup() {
+    const server = this.config.ssl ? https.createServer(await this.getCert()) : http.createServer();
+    const wss = new WebSocketServer({
+      server,
+      verifyClient: ({ req }) => {
+        // Skip authentication if it is not configured
+        if (!this.config.auth?.username || !this.config.auth?.password) {
+          return true;
+        }
+
+        try {
+          const auth = basicAuth(req);
+          if (
+            auth?.name === this.config.auth.username &&
+            auth?.pass === this.config.auth.password
+          ) {
+            return true;
+          }
+        } catch (e) {
+          /* capture any failures parsing auth header and fall through */
+        }
+        this.log.error('Authentication failed; refusing connection');
+        return false;
+      },
+    });
+    wss.on('connection', (ws, req) => {
       this.wsConnection = ws;
       this.wsConnection.on('message', async (data) => {
         if (!data) {
@@ -243,7 +270,85 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
       });
       this.log.info('client ip %s connected', req.socket.remoteAddress);
     });
-    this.server.listen(this.config.port);
+    server.listen(this.config.port);
+  }
+
+  async getCert(): Promise<createCert.CertificateData> {
+    try {
+      return await createCert();
+    } catch (e) {
+      this.log.warn(
+        'Failed to generate custom SSL cert; falling back to insecure default certificate',
+      );
+      return {
+        key:
+          '-----BEGIN RSA PRIVATE KEY-----\n' +
+          'MIIEowIBAAKCAQEA2xaJRlhVuDMHyXQkedpjg2pPBrh14S8OfPGBB3a0S5DtycYd\n' +
+          'pKgYcIx2jtiULcLku8gayh9U4h8n5pqdBjdH3nA6VV1ICMvv7eMOxSgw6z9IZqcj\n' +
+          'ulQVAvIXIArVSLLRyyFQjMwiyWFm4Kdqj7ye8MNbNVxSP1sF0yrzCO+xD1Piq0la\n' +
+          'G1mzmVjX7pT8NHseWa2wuXuzCrFvDgF3ACWQoBtWS5zmXVfyDRsPcUHQSTZQHql1\n' +
+          'vQ9v5ISH2KZbZm/P0CP2odYHFqR3ojLy81YVQ4kSivMtNN/XqMRNRGH68wUG1wHS\n' +
+          'hyh6tha+zNXU7f6oCPZvcNBJQZpBdyVs+1Kt2wIDAQABAoIBAGaw4QZKeF9e9/rq\n' +
+          'yAAfp75c0Y7eXk5+7oUM9ARKFQdIdtS5WoKn0dDLXfTlukray7ji+f+cgP5+SQcT\n' +
+          'mJ9lwPeX1hfWIeIRqTPxViZ+iLNzlZ2cISiAqdqYG9PGkCNDwgc65dUhB/spfv21\n' +
+          'K0MVT9CdWP6hd+G/afMJciJRq0X5lz5S+sKZD5Xt2pMOJFP3m1Z/FevRoZZDm5hs\n' +
+          'LS9yDNZwZYh6MsaEXwG2LmLkfgHsuvIMfobu6j38bIaeOfNDUMUS1t0V+s0uWjbM\n' +
+          'i1CfMRoNCAi6FSh1kB7d6+qdNp0Rg5jgCaXbx5D2Doh82K746YGencryyS4TC2Q6\n' +
+          'TgdB9P0CgYEA8JjNTr4wtzOmGwwryOEwLQGj7qTWstwmhJKA6koQ2OtsDdps+kHq\n' +
+          'hN7sw2VgHKaCEbFfvUWVP03G80wKQpgOF/F8iKWTOosgQ/jGo0u8/jVHxSU+xeDp\n' +
+          '8+qGY0Wt1s7Ssz7naARHZo6jzIoWMmwhnfQyr2EmYd0e5uQLe/01VvUCgYEA6R04\n' +
+          'gL1lPMJB4//k10DXprfzp1A/O+kc1SO0NJfrTgz8r957dhyxZXIsnOIRcC3FeZX3\n' +
+          'KFblo7DsfJOv6fmNbJziG6cf74ytfO9Zbyz4nAoQ90dG+WfUmY6H5PtdbCv2awZ/\n' +
+          'xmVQ3S23B2P8Cl0l+fjDI3DEjMj7EIKpUSv7z48CgYBmk27sxG92nAGUhILiWQe2\n' +
+          'GH3wz7xtcyjE2sU1njBCm1RtL5PIunOnBHgC8mSgsmi/7FR6GIGCBMHulpvFOpi/\n' +
+          'oohKpfT4P7qY4CaoFjFUXBjmN3Pk33g/Mtzq1BlCfNkd7JKyKSjb07KIENNX2fwX\n' +
+          'ILa/SPcZQDHdlJpE2XZ1RQKBgAMjI4mIAv7IVn6tCPVkqAJUY3ETAWbbAkpUCq7S\n' +
+          'hJYuUpBDXEIArNqCqNsLp9RsqUWzoPnoAXssfGJI0otBkoetrNVWcHWW3RbbWcbH\n' +
+          'QilHcWcCjI/6t7/BTU7lmyJDjTNviPSwlGAFp3rv+4pgKoysrmOhtuN2KPrV51Vy\n' +
+          'VBc9AoGBALC1+iO/hu7Ees0PwfmHd2lhHGDjG7y/+Mds/y6W2ThL9TrvnOF8HYiF\n' +
+          'M91o/IgBR3HrRf7sdzV7GNW7SBNDyp7cIzjqkHVIAlXVUOPMe/iNO5JHuisX4RuZ\n' +
+          'rnR4iNSEk7C8n+qIS5yc6WINhellI2OfSRTzB5hrYwXDt++J0tuZ\n' +
+          '-----END RSA PRIVATE KEY-----',
+        cert:
+          '-----BEGIN CERTIFICATE-----\n' +
+          'MIIC7DCCAdSgAwIBAgIGAY2pOrt6MA0GCSqGSIb3DQEBCwUAMBQxEjAQBgNVBAMM\n' +
+          'CWxvY2FsaG9zdDAeFw0yNDAyMTQyMDA2NTVaFw0yNTAyMTMyMDA2NTVaMBYxFDAS\n' +
+          'BgNVBAMMC2V4YW1wbGUuY29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKC\n' +
+          'AQEA2xaJRlhVuDMHyXQkedpjg2pPBrh14S8OfPGBB3a0S5DtycYdpKgYcIx2jtiU\n' +
+          'LcLku8gayh9U4h8n5pqdBjdH3nA6VV1ICMvv7eMOxSgw6z9IZqcjulQVAvIXIArV\n' +
+          'SLLRyyFQjMwiyWFm4Kdqj7ye8MNbNVxSP1sF0yrzCO+xD1Piq0laG1mzmVjX7pT8\n' +
+          'NHseWa2wuXuzCrFvDgF3ACWQoBtWS5zmXVfyDRsPcUHQSTZQHql1vQ9v5ISH2KZb\n' +
+          'Zm/P0CP2odYHFqR3ojLy81YVQ4kSivMtNN/XqMRNRGH68wUG1wHShyh6tha+zNXU\n' +
+          '7f6oCPZvcNBJQZpBdyVs+1Kt2wIDAQABo0IwQDAdBgNVHQ4EFgQUZCKdmCsYuTKt\n' +
+          'PLka3vYgKCG/7z4wHwYDVR0jBBgwFoAUUUGRhGpWwgA6CF/TYt44s75Op7EwDQYJ\n' +
+          'KoZIhvcNAQELBQADggEBALrWjqJLaojzekwoIKtlUTugkis7Fq094QmRLZapJtyC\n' +
+          'Dtk2mDwBZY0Ofjg/Hbl8yRNEZDVltHL55ltsWmEjBDbCWgElGDSA3Qlu8I0X5m6E\n' +
+          '4jnJzn8PfwMmZaGHMbc0kPLLYe1hRs97IqQUVdfG4+Q3BXSAke//u5CCtxL3upIj\n' +
+          'NERhQFvZz6vD6umW48RUR9efJ8U5rA1KI1F0d2/OoGAZp/rpdwRoQO9LmZioiWjQ\n' +
+          'BjJklKO43EkkBxG03PbLHO5vuY9zDkI2wEW2WELzP9CZQE7eg5EeYHWnYjK+ZpJ8\n' +
+          'Bl1srF2/qBLS6VIvip4Yd1A5H4GK7nGWSTsMSTVYM5U=\n' +
+          '-----END CERTIFICATE-----',
+        caCert:
+          '-----BEGIN CERTIFICATE-----\n' +
+          'MIIC1zCCAb+gAwIBAgIUQp8BFTcl7IYkC7T3VkihA0m4dXswDQYJKoZIhvcNAQEL\n' +
+          'BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI0MDIxNDIwMDY1NVoXDTI1MDIx\n' +
+          'MzIwMDY1NVowFDESMBAGA1UEAwwJbG9jYWxob3N0MIIBIjANBgkqhkiG9w0BAQEF\n' +
+          'AAOCAQ8AMIIBCgKCAQEAzV8RHL+07wslEaN6BQ1Hx7UY4jKAL3WbUCqWa5ES+TGe\n' +
+          'PbN7MsxumDgLvSkzz+buBaeqLJryfc9JwFD84rthw0fMFVtNoRBjs4GbtNv5080y\n' +
+          'iStajW9c7HT1JcVdPGPewwZOZXOgo9KWhZSHcLNbqmhuCLh6H9RkEUybKvNqd6Qj\n' +
+          'zmxVQ33ApqtKRjuaIpu2qCqHZMwsr1ONLfvAjWMGMzSV+i0DDX8tC12zAhvuBLHM\n' +
+          'z/rRxpSr+SFVIAJsjF4anweKSfKRLXjXEMCNPRf5OgmvJBX2DeJ4bEHqrvxMr7xE\n' +
+          'nBhm/m0B1EDZT2hjS12/qD7ym9f8zL4HI3Qd9fWN1QIDAQABoyEwHzAdBgNVHQ4E\n' +
+          'FgQUUUGRhGpWwgA6CF/TYt44s75Op7EwDQYJKoZIhvcNAQELBQADggEBAB5JhLwg\n' +
+          'RBNgnZtMlPW+CU6iALIyYoFqsoLFtt78P/vR4l4wTW4weEJu2AeHXQZab++sx0Dv\n' +
+          'XZmLAhiYvMTpkkHd2sdXHZFms84Q8KLOwhRZSIISqqy+UAecDLiCzQQ+EVe3t8dp\n' +
+          '+nVicypwWiWn7aK8Y0wfKA1xrn63xD74pqrZfZXSbZ9WZM+X5fdzJugppTds83oL\n' +
+          'vGDvcSD6PhQ6/fjI0H/oZKtdLIQn7g+txfDXP51jShoNVxojEPuAPaJv9XB3VYDz\n' +
+          '6GluakpUlJPbUMohOBpbP69W02gf/84Dp0/u/cXJ6+mp/XTyWXIWJejBIn2Q+ckw\n' +
+          'O2LTrcFfhUZ7P58=\n' +
+          '-----END CERTIFICATE-----',
+      };
+    }
   }
 
   async onMessage(message: C4HCIncomingMessage): Promise<C4HCOutgoingMessage> {
