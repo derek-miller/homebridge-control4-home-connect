@@ -17,8 +17,43 @@
         "default": 4050,
         "minimum": 1,
         "required": true
+      },
+      "ssl": {
+        "title": "Enable Websocket SSL",
+        "type": "boolean",
+        "required": false,
+        "default": false
+      },
+      "auth": {
+        "type": "object",
+        "default": {},
+        "required": false,
+        "properties": {
+          "username": {
+            "title": "Username",
+            "type": "string",
+            "required": true
+          },
+          "password": {
+            "title": "Password",
+            "type": "string",
+            "required": true,
+            "options": {
+              "hidden": true
+            }
+          }
+        }
       }
     }
   },
-  "form": ["name", "port"]
+  "layout": [
+    "name",
+    "port",
+    "ssl",
+    {
+      "type": "section",
+      "title": "Authentication",
+      "items": ["auth.username", "auth.password"]
+    }
+  ]
 }
