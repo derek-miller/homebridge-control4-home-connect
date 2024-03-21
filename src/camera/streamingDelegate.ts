@@ -23,9 +23,11 @@ import {
 import { spawn } from 'child_process';
 import { createSocket, Socket } from 'dgram';
 import ffmpegPath from 'ffmpeg-for-homebridge';
-import { pickPort, Type } from 'pick-port';
 import { FfmpegProcess } from './ffmpeg';
 import { C4HCHomebridgePlatform, C4HCPlatformAccessoryContext } from '../platform';
+import { RtpDescription, RtpOptions, SipCall } from './sip-call';
+import { RtpHelper, RtpPortAllocator } from './rtp';
+import { loggerWithPrefix } from '../utils';
 
 export type CameraConfig = {
   source?: string;
@@ -46,6 +48,14 @@ export type CameraConfig = {
   audio?: boolean;
   debug?: boolean;
   debugReturn?: boolean;
+  sipConfig?: SipConfig;
+};
+
+export type SipConfig = {
+  from: string;
+  to: string;
+  address: string;
+  server: string;
 };
 
 type SessionInfo = {
@@ -63,6 +73,12 @@ type SessionInfo = {
   audioCryptoSuite: SRTPCryptoSuites;
   audioSRTP: Buffer;
   audioSSRC: number;
+
+  sipRtpOptions?: RtpOptions;
+  sipRemoteRtpDescription?: RtpDescription;
+  rtpHelper?: RtpHelper;
+  rtpLocalAudioPort?: number;
+  rtpLocalAudioPortRtcp?: number;
 };
 
 type ResolutionInfo = {
@@ -78,6 +94,7 @@ type ActiveSession = {
   returnProcess?: FfmpegProcess;
   timeout?: NodeJS.Timeout;
   socket?: Socket;
+  rtpHelper?: RtpHelper;
 };
 
 export class StreamingDelegate implements CameraStreamingDelegate {
@@ -88,7 +105,7 @@ export class StreamingDelegate implements CameraStreamingDelegate {
 
   private readonly ffmpegPath: string;
   private readonly cameraConfig: CameraConfig;
-  private readonly cameraName: string;
+  private readonly sipCall?: SipCall;
   readonly controller: CameraController;
   private snapshotPromise?: Promise<Buffer>;
 
@@ -103,18 +120,18 @@ export class StreamingDelegate implements CameraStreamingDelegate {
     accessory: PlatformAccessory<C4HCPlatformAccessoryContext>,
   ) {
     // eslint-disable-line @typescript-eslint/explicit-module-boundary-types
-    this.log = log;
+    this.log = loggerWithPrefix(log, `[${accessory.displayName}]`);
     this.api = api;
     this.platform = platform;
     this.accessory = accessory;
     this.ffmpegPath = ffmpegPath || 'ffmpeg';
     this.cameraConfig = this.accessory.context.definition.options?.camera ?? {};
-    this.cameraName = this.accessory.displayName;
 
     this.api.on(APIEvent.SHUTDOWN, () => {
       for (const session in this.ongoingSessions) {
         this.stopStream(session);
       }
+      this.sipCall?.destroy();
     });
 
     const options: CameraControllerOptions = {
@@ -151,19 +168,22 @@ export class StreamingDelegate implements CameraStreamingDelegate {
         },
         audio: this.cameraConfig.audio
           ? {
-              twoWayAudio: !!this.cameraConfig.returnAudioTarget,
+              twoWayAudio: !!this.cameraConfig.returnAudioTarget || !!this.cameraConfig.sipConfig,
               codecs: [
                 {
                   type: AudioStreamingCodecType.AAC_ELD,
                   samplerate: AudioStreamingSamplerate.KHZ_16,
-                  /*type: AudioStreamingCodecType.OPUS,
-              samplerate: AudioStreamingSamplerate.KHZ_24*/
+                  // type: AudioStreamingCodecType.OPUS,
+                  // samplerate: AudioStreamingSamplerate.KHZ_24,
                 },
               ],
             }
           : undefined,
       },
     };
+    if (this.cameraConfig.sipConfig) {
+      this.sipCall = new SipCall(this.log, this.cameraConfig.sipConfig);
+    }
 
     this.controller = new this.api.hap.CameraController(options);
   }
@@ -226,11 +246,7 @@ export class StreamingDelegate implements CameraStreamingDelegate {
         ' -hide_banner' +
         ' -loglevel error';
 
-      this.log.debug(
-        'Snapshot command: ' + this.ffmpegPath + ' ' + ffmpegArgs,
-        this.cameraName,
-        this.cameraConfig.debug,
-      );
+      this.log.debug('Snapshot command:', this.ffmpegPath, ffmpegArgs);
       const ffmpeg = spawn(this.ffmpegPath, ffmpegArgs.split(/\s+/), { env: process.env });
 
       let snapshotBuffer = Buffer.alloc(0);
@@ -247,7 +263,7 @@ export class StreamingDelegate implements CameraStreamingDelegate {
           .forEach((line: string) => {
             if (this.cameraConfig.debug && line.length > 0) {
               // For now only write anything out when debug is set
-              this.log.error(line, this.cameraName + '] [Snapshot');
+              this.log.error('[Snapshot]', line);
             }
           });
       });
@@ -265,14 +281,14 @@ export class StreamingDelegate implements CameraStreamingDelegate {
         const runtime = (Date.now() - startTime) / 1000;
         let message = 'Fetching snapshot took ' + runtime + ' seconds.';
         if (runtime < 5) {
-          this.log.debug(message, this.cameraName, this.cameraConfig.debug);
+          this.log.debug(message);
         } else {
           if (runtime < 22) {
-            this.log.warn(message, this.cameraName);
+            this.log.warn(message);
           } else {
             message +=
               ' The request has timed out and the snapshot has not been refreshed in HomeKit.';
-            this.log.error(message, this.cameraName);
+            this.log.error(message);
           }
         }
       });
@@ -288,11 +304,7 @@ export class StreamingDelegate implements CameraStreamingDelegate {
         (resizeFilter ? ' -filter:v ' + resizeFilter : '') +
         ' -f image2 -';
 
-      this.log.debug(
-        'Resize command: ' + this.ffmpegPath + ' ' + ffmpegArgs,
-        this.cameraName,
-        this.cameraConfig.debug,
-      );
+      this.log.debug('Resize command:', this.ffmpegPath, ffmpegArgs);
       const ffmpeg = spawn(this.ffmpegPath, ffmpegArgs.split(/\s+/), { env: process.env });
 
       let resizeBuffer = Buffer.alloc(0);
@@ -318,28 +330,22 @@ export class StreamingDelegate implements CameraStreamingDelegate {
     try {
       const cachedSnapshot = !!this.snapshotPromise;
 
-      this.log.debug(
-        'Snapshot requested: ' + request.width + ' x ' + request.height,
-        this.cameraName,
-        this.cameraConfig.debug,
-      );
+      this.log.debug('Snapshot requested:', request.width, 'x', request.height);
 
       const snapshot = await (this.snapshotPromise || this.fetchSnapshot(resolution.snapFilter));
 
       this.log.debug(
-        'Sending snapshot: ' +
-          (resolution.width > 0 ? resolution.width : 'native') +
-          ' x ' +
-          (resolution.height > 0 ? resolution.height : 'native') +
-          (cachedSnapshot ? ' (cached)' : ''),
-        this.cameraName,
-        this.cameraConfig.debug,
+        'Sending snapshot:',
+        resolution.width > 0 ? resolution.width : 'native',
+        'x',
+        resolution.height > 0 ? resolution.height : 'native',
+        cachedSnapshot ? '(cached)' : '',
       );
 
       const resized = await this.resizeSnapshot(snapshot, resolution.resizeFilter);
       callback(undefined, resized);
     } catch (err) {
-      this.log.error(err as string, this.cameraName);
+      this.log.error(err as string);
       callback();
     }
   }
@@ -349,15 +355,12 @@ export class StreamingDelegate implements CameraStreamingDelegate {
     callback: PrepareStreamCallback,
   ): Promise<void> {
     const ipv6 = request.addressVersion === 'ipv6';
-
-    const options = {
-      type: <Type>'udp',
-      ip: ipv6 ? '::' : '0.0.0.0',
-      reserveTimeout: 15,
-    };
-    const videoReturnPort = await pickPort(options);
+    const [videoReturnPort, _, audioReturnPort, __, ...sipAudioPorts] =
+      await RtpPortAllocator.reservePorts(
+        ipv6 ? 'ipv6' : 'ipv4',
+        this.cameraConfig.sipConfig && this.sipCall ? 8 : 4,
+      );
     const videoSSRC = this.api.hap.CameraController.generateSynchronisationSource();
-    const audioReturnPort = await pickPort(options);
     const audioSSRC = this.api.hap.CameraController.generateSynchronisationSource();
 
     const sessionInfo: SessionInfo = {
@@ -376,6 +379,51 @@ export class StreamingDelegate implements CameraStreamingDelegate {
       audioSRTP: Buffer.concat([request.audio.srtp_key, request.audio.srtp_salt]),
       audioSSRC: audioSSRC,
     };
+
+    if (this.cameraConfig.sipConfig && this.sipCall) {
+      const [
+        sipIncomingAudioPort,
+        sipIncomingAudioRtcpPort,
+        sipLocalAudioPort,
+        sipLocalAudioRtcpPort,
+      ] = sipAudioPorts;
+      const sipAudioSSRC = this.api.hap.CameraController.generateSynchronisationSource();
+      sessionInfo.sipRtpOptions = {
+        audio: {
+          port: sipIncomingAudioPort,
+          rtcpPort: sipIncomingAudioRtcpPort,
+          ssrc: sipAudioSSRC,
+        },
+      };
+      sessionInfo.rtpLocalAudioPort = sipLocalAudioPort;
+      sessionInfo.rtpLocalAudioPortRtcp = sipLocalAudioRtcpPort;
+
+      try {
+        const sipRemoteRtpDescription = await this.sipCall.invite({
+          audio: {
+            port: sipIncomingAudioPort,
+            rtcpPort: sipIncomingAudioRtcpPort,
+            ssrc: sipAudioSSRC,
+          },
+        });
+
+        sessionInfo.sipRemoteRtpDescription = sipRemoteRtpDescription;
+        sessionInfo.rtpHelper = new RtpHelper(
+          this.log,
+          'ipv4',
+          sipIncomingAudioPort,
+          sipIncomingAudioRtcpPort,
+          sipLocalAudioPort,
+          sipLocalAudioRtcpPort,
+          sipRemoteRtpDescription.address,
+          sipRemoteRtpDescription.audio.port,
+          sipRemoteRtpDescription.audio.rtcpPort,
+        );
+      } catch (err) {
+        this.sipCall.sendBye().catch();
+        this.log.error('SIP INVITE failed:', err);
+      }
+    }
 
     const response: PrepareStreamResponse = {
       video: {
@@ -432,33 +480,38 @@ export class StreamingDelegate implements CameraStreamingDelegate {
       }
 
       this.log.debug(
-        'Video stream requested: ' +
-          request.video.width +
-          ' x ' +
-          request.video.height +
-          ', ' +
-          request.video.fps +
-          ' fps, ' +
-          request.video.max_bit_rate +
-          ' kbps',
-        this.cameraName,
-        this.cameraConfig.debug,
+        'Video stream requested:',
+        request.video.width,
+        'x',
+        request.video.height,
+        ',',
+        request.video.fps,
+        'fps,',
+        request.video.max_bit_rate,
+        'kbps',
       );
       this.log.info(
-        'Starting video stream: ' +
-          (resolution.width > 0 ? resolution.width : 'native') +
-          ' x ' +
-          (resolution.height > 0 ? resolution.height : 'native') +
-          ', ' +
-          (fps > 0 ? fps : 'native') +
-          ' fps, ' +
-          (videoBitrate > 0 ? videoBitrate : '???') +
-          ' kbps' +
-          (this.cameraConfig.audio ? ' (' + request.audio.codec + ')' : ''),
-        this.cameraName,
+        'Starting video stream:',
+        resolution.width > 0 ? resolution.width : 'native',
+        'x',
+        resolution.height > 0 ? resolution.height : 'native',
+        ',',
+        fps > 0 ? fps : 'native',
+        'fps,',
+        videoBitrate > 0 ? videoBitrate : '???',
+        'kbps',
+        this.cameraConfig.audio ? ' (' + request.audio.codec + ')' : '',
       );
 
       let ffmpegArgs = this.cameraConfig.source!;
+      if (this.cameraConfig.sipConfig) {
+        ffmpegArgs += // SIP audio via RTP
+          ' -hide_banner' +
+          ' -protocol_whitelist pipe,udp,rtp,file,crypto' +
+          ' -f sdp' +
+          ' -c:a pcm_mulaw' +
+          ' -i pipe:';
+      }
 
       ffmpegArgs += // Video
         (this.cameraConfig.mapvideo ? ' -map ' + this.cameraConfig.mapvideo : ' -an -sn -dn') +
@@ -498,8 +551,8 @@ export class StreamingDelegate implements CameraStreamingDelegate {
           ffmpegArgs += // Audio
             (this.cameraConfig.mapaudio ? ' -map ' + this.cameraConfig.mapaudio : ' -vn -sn -dn') +
             (request.audio.codec === AudioStreamingCodecType.OPUS
-              ? ' -codec:a libopus' + ' -application lowdelay'
-              : ' -codec:a libfdk_aac' + ' -profile:a aac_eld') +
+              ? ' -codec:a libopus -application lowdelay'
+              : ' -codec:a libfdk_aac -profile:a aac_eld') +
             ' -flags +global_header' +
             ' -f null' +
             ' -ar ' +
@@ -528,10 +581,7 @@ export class StreamingDelegate implements CameraStreamingDelegate {
             sessionInfo.audioPort +
             '&pkt_size=188';
         } else {
-          this.log.error(
-            'Unsupported audio codec requested: ' + request.audio.codec,
-            this.cameraName,
-          );
+          this.log.error('Unsupported audio codec requested:', request.audio.codec);
         }
       }
 
@@ -542,7 +592,7 @@ export class StreamingDelegate implements CameraStreamingDelegate {
 
       activeSession.socket = createSocket(sessionInfo.ipv6 ? 'udp6' : 'udp4');
       activeSession.socket.on('error', (err: Error) => {
-        this.log.error('Socket error: ' + err.message, this.cameraName);
+        this.log.error('Socket error:', err.message);
         this.stopStream(request.sessionID);
       });
       activeSession.socket.on('message', () => {
@@ -551,7 +601,7 @@ export class StreamingDelegate implements CameraStreamingDelegate {
         }
         activeSession.timeout = setTimeout(
           () => {
-            this.log.info('Device appears to be inactive. Stopping stream.', this.cameraName);
+            this.log.info('Device appears to be inactive; stopping stream');
             this.controller.forceStopStreamingSession(request.sessionID);
             this.stopStream(request.sessionID);
           },
@@ -560,16 +610,50 @@ export class StreamingDelegate implements CameraStreamingDelegate {
       });
       activeSession.socket.bind(sessionInfo.videoReturnPort);
 
+      if (
+        this.cameraConfig.sipConfig &&
+        sessionInfo.sipRemoteRtpDescription &&
+        sessionInfo.sipRtpOptions
+      ) {
+        // If we use SIP we set up the returnAudioTarget ourselves
+        this.cameraConfig.returnAudioTarget =
+          ' -acodec pcm_mulaw' +
+          ' -ac 1' +
+          ' -ar 8k' +
+          ' -f rtp' +
+          //(sessionInfo.sipRemoteRtpDescription.audio.ssrc ? ' -ssrc ' +
+          // sessionInfo.sipRemoteRtpDescription.audio.ssrc : '') +
+          // see ffmpeg bug: https://trac.ffmpeg.org/ticket/9080
+          ' -payload_type 0' +
+          ' rtp://127.0.0.1:' +
+          sessionInfo.sipRtpOptions.audio.port +
+          '?rtcpport=' +
+          sessionInfo.sipRtpOptions.audio.rtcpPort;
+      }
+
       activeSession.mainProcess = new FfmpegProcess(
-        this.cameraName,
         request.sessionID,
         this.ffmpegPath,
         ffmpegArgs,
-        this.log,
+        loggerWithPrefix(this.log, '[Main]'),
         this.cameraConfig.debug,
         this,
         callback,
       );
+
+      if (this.cameraConfig.sipConfig) {
+        const sdpAudio =
+          'v=0\r\n' +
+          'o=- 0 0 IN IP4 127.0.0.1\r\n' +
+          's=Talk\r\n' +
+          'c=IN IP4 127.0.0.1\r\n' +
+          't=0 0\r\n' +
+          'm=audio ' +
+          sessionInfo.rtpLocalAudioPort +
+          ' RTP/AVP 0\r\n' +
+          'a=rtpmap:0 PCMU/8000\r\n';
+        activeSession.mainProcess.stdin.end(sdpAudio);
+      }
 
       if (this.cameraConfig.returnAudioTarget) {
         const ffmpegReturnArgs =
@@ -612,21 +696,22 @@ export class StreamingDelegate implements CameraStreamingDelegate {
           sessionInfo.audioSRTP.toString('base64') +
           '\r\n';
         activeSession.returnProcess = new FfmpegProcess(
-          this.cameraName + '] [Two-way',
           request.sessionID,
           this.ffmpegPath,
           ffmpegReturnArgs,
-          this.log,
+          loggerWithPrefix(this.log, '[Two-way]'),
           this.cameraConfig.debugReturn,
           this,
         );
         activeSession.returnProcess.stdin.end(sdpReturnAudio);
       }
 
+      activeSession.rtpHelper = sessionInfo.rtpHelper;
+
       this.ongoingSessions.set(request.sessionID, activeSession);
       this.pendingSessions.delete(request.sessionID);
     } else {
-      this.log.error('Error finding session information.', this.cameraName);
+      this.log.error('Error finding session information');
       callback(new Error('Error finding session information'));
     }
   }
@@ -638,17 +723,15 @@ export class StreamingDelegate implements CameraStreamingDelegate {
         break;
       case StreamRequestTypes.RECONFIGURE:
         this.log.debug(
-          'Received request to reconfigure: ' +
-            request.video.width +
-            ' x ' +
-            request.video.height +
-            ', ' +
-            request.video.fps +
-            ' fps, ' +
-            request.video.max_bit_rate +
-            ' kbps (Ignored)',
-          this.cameraName,
-          this.cameraConfig.debug,
+          'Received request to reconfigure:',
+          request.video.width,
+          'x',
+          request.video.height,
+          ',',
+          request.video.fps,
+          'fps,',
+          request.video.max_bit_rate,
+          'kbps (Ignored)',
         );
         callback();
         break;
@@ -668,23 +751,22 @@ export class StreamingDelegate implements CameraStreamingDelegate {
       try {
         session.socket?.close();
       } catch (err) {
-        this.log.error('Error occurred closing socket: ' + err, this.cameraName);
+        this.log.error('Error occurred closing socket:', err);
       }
       try {
         session.mainProcess?.stop();
       } catch (err) {
-        this.log.error('Error occurred terminating main FFmpeg process: ' + err, this.cameraName);
+        this.log.error('Error occurred terminating main FFmpeg process:', err);
       }
       try {
         session.returnProcess?.stop();
       } catch (err) {
-        this.log.error(
-          'Error occurred terminating two-way FFmpeg process: ' + err,
-          this.cameraName,
-        );
+        this.log.error('Error occurred terminating two-way FFmpeg process:', err);
       }
+      this.sipCall?.sendBye();
+      session.rtpHelper?.close();
     }
     this.ongoingSessions.delete(sessionId);
-    this.log.info('Stopped video stream.', this.cameraName);
+    this.log.info('Stopped video stream');
   }
 }

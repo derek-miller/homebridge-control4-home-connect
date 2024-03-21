@@ -36,22 +36,23 @@
     "basic-auth": "^2.0.1",
     "create-cert": "^1.0.6",
     "ffmpeg-for-homebridge": "^2.1.1",
-    "pick-port": "^2.0.1",
+    "sdp": "3.2.0",
+    "sip": "0.0.6",
     "ws": "^8.16.0"
   },
   "devDependencies": {
     "@types/basic-auth": "^1.1.8",
     "@types/create-cert": "^1.0.4",
-    "@types/node": "^20.8.0",
-    "@types/ws": "^8.5.6",
+    "@types/node": "^20.11.30",
+    "@types/ws": "^8.5.10",
     "@typescript-eslint/eslint-plugin": "6.10.0",
     "@typescript-eslint/parser": "6.10.0",
-    "eslint": "^8.50.0",
-    "homebridge": "^1.6.1",
-    "homebridge-config-ui-x": "^4.50.6",
-    "nodemon": "^3.0.1",
-    "prettier": "^3.0.3",
-    "ts-node": "^10.9.1",
-    "typescript": "^5.2.2"
+    "eslint": "^8.57.0",
+    "homebridge": "^1.7.0",
+    "homebridge-config-ui-x": "^4.55.1",
+    "nodemon": "^3.1.0",
+    "prettier": "^3.2.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.3"
   }
 }

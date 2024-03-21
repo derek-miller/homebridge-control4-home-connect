@@ -48,7 +48,7 @@ type C4HCIncomingMessage =
     }
   | {
       topic: 'camera-support-request';
-      payload: never;
+      payload: C4HCCameraSupportRequest;
     }
   | {
       topic: string;
@@ -117,6 +117,12 @@ export interface C4HCPlatformAccessoryContext {
 type C4HCAddRequestPayload = C4HCCommonPayload & C4HCAccessoryDefinition;
 
 type C4HCRemoveRequestPayload = C4HCCommonPayload;
+
+type C4HCCameraSupportRequest =
+  | {
+      codecs?: string[];
+    }
+  | 'default';
 
 type C4HCCameraSupportResponse = {
   codecs: { [index: string]: { decoders: string[]; encoders: string[] } };
@@ -376,7 +382,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
       case 'camera-support-request':
         return {
           topic: 'camera-support-response',
-          payload: await this.cameraSupport(),
+          payload: await this.cameraSupport(message.payload),
         };
       default:
         this.log.warn("received message with an unknown topic '%s'", message.topic);
@@ -928,13 +934,17 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
     };
   }
 
-  async cameraSupport(): Promise<C4HCResponsePayload<C4HCCameraSupportResponse>> {
+  async cameraSupport(
+    payload: C4HCCameraSupportRequest,
+  ): Promise<C4HCResponsePayload<C4HCCameraSupportResponse>> {
     try {
       return {
         ack: true,
         message: 'camera support',
         response: {
-          codecs: await this.ffmpegCodecs.getCodecs(),
+          codecs: await this.ffmpegCodecs.getCodecs(
+            payload === 'default' ? 'all' : payload?.codecs ?? [],
+          ),
         },
       };
     } catch (e: unknown) {
