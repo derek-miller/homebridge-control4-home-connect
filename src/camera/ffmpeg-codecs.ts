@@ -16,7 +16,7 @@ export class FfmpegCodecs {
     this._ffmpegCodecs = undefined;
   }
 
-  public async getCodecs(): Promise<{
+  public async getCodecs(codecsFilter: string[] | 'all'): Promise<{
     [codec: string]: { decoders: string[]; encoders: string[] };
   }> {
     if (this._ffmpegCodecs === undefined) {
@@ -37,7 +37,11 @@ export class FfmpegCodecs {
         };
       }
     }
-    return this._ffmpegCodecs;
+    return Object.fromEntries(
+      Object.entries(this._ffmpegCodecs).filter(
+        ([codec]) => codecsFilter === 'all' || codecsFilter.includes(codec),
+      ),
+    );
   }
 
   private async runCommand(command: string, commandLineArgs: string[]): Promise<string> {
