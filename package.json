@@ -26,7 +26,8 @@
     "fmt": "npm run lint-fix",
     "watch": "npm run build && npm link && nodemon",
     "build": "rm -rf ./dist && tsc",
-    "prepublishOnly": "npm run lint && npm run build"
+    "prepublishOnly": "npm run lint && npm run build",
+    "clean": "rm -rf config/accessories config/persist dist node_modules"
   },
   "keywords": [
     "homebridge-plugin",
@@ -38,21 +39,21 @@
     "ffmpeg-for-homebridge": "^2.1.1",
     "sdp": "3.2.0",
     "sip": "0.0.6",
-    "ws": "^8.16.0"
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/basic-auth": "^1.1.8",
     "@types/create-cert": "^1.0.4",
-    "@types/node": "^20.11.30",
-    "@types/ws": "^8.5.10",
+    "@types/node": "^22.1.0",
+    "@types/ws": "^8.5.12",
     "@typescript-eslint/eslint-plugin": "6.10.0",
     "@typescript-eslint/parser": "6.10.0",
-    "eslint": "^8.57.0",
-    "homebridge": "^1.7.0",
-    "homebridge-config-ui-x": "^4.55.1",
-    "nodemon": "^3.1.0",
-    "prettier": "^3.2.5",
+    "eslint": "8.57.0",
+    "homebridge": "^2.0.0-beta.11",
+    "homebridge-config-ui-x": "^4.56.4",
+    "nodemon": "^3.1.4",
+    "prettier": "^3.3.3",
     "ts-node": "^10.9.2",
-    "typescript": "^5.4.3"
+    "typescript": "^5.5.4"
   }
 }

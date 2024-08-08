@@ -2,6 +2,9 @@ import { Logger, LogLevel } from 'homebridge';
 
 export function loggerWithPrefix(logger: Logger, prefix: string): Logger {
   return {
+    success(message: string, ...parameters: never[]): void {
+      logger.success(prefix, message, ...parameters);
+    },
     debug(message: string, ...parameters: never[]): void {
       logger.debug(prefix, message, ...parameters);
     },

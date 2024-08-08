@@ -11,6 +11,7 @@ import {
   PlatformAccessory,
   PlatformConfig,
   Service,
+  CharacteristicProps,
 } from 'homebridge';
 
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
@@ -19,7 +20,6 @@ import basicAuth from 'basic-auth';
 import createCert from 'create-cert';
 import http from 'http';
 import https from 'https';
-import { CharacteristicProps, Perms } from 'hap-nodejs/dist/lib/Characteristic';
 import { CameraConfig, StreamingDelegate } from './camera/streamingDelegate';
 import { FfmpegCodecs } from './camera/ffmpeg-codecs';
 
@@ -549,7 +549,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
           }
         } else {
           message = `added ${payload.external ? 'external ' : ''}accessory '${name}'`;
-          this.log.info(`Adding ${payload.external ? 'external ' : 'new'} accessory:`, name);
+          this.log.info(`Adding ${payload.external ? 'external' : 'new'} accessory:`, name);
           if (!payload.external) {
             this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
           } else {
@@ -745,7 +745,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
         serviceName !== 'AccessoryInformation' &&
         characteristicName !== 'Name' &&
         !ADAPTIVE_LIGHTING_CHARACTERISTIC_NAMES.includes(characteristicName) &&
-        characteristic.props.perms.includes(Perms.PAIRED_READ)
+        characteristic.props.perms.includes(this.api.hap.Perms.PAIRED_READ)
       ) {
         characteristic.onGet(() => this.onGet(accessory, service, characteristic));
       }
@@ -753,7 +753,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
         serviceName !== 'AccessoryInformation' &&
         characteristicName !== 'Name' &&
         !ADAPTIVE_LIGHTING_CHARACTERISTIC_NAMES.includes(characteristicName) &&
-        characteristic.props.perms.includes(Perms.PAIRED_WRITE)
+        characteristic.props.perms.includes(this.api.hap.Perms.PAIRED_WRITE)
       ) {
         characteristic.onSet((value) => this.onSet(accessory, service, characteristic, value));
       }
@@ -943,7 +943,7 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
         message: 'camera support',
         response: {
           codecs: await this.ffmpegCodecs.getCodecs(
-            payload === 'default' ? 'all' : payload?.codecs ?? [],
+            payload === 'default' ? 'all' : (payload?.codecs ?? []),
           ),
         },
       };
