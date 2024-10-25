@@ -12,6 +12,7 @@ import {
   PlatformConfig,
   Service,
   CharacteristicProps,
+  UnknownContext,
 } from 'homebridge';
 
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
@@ -94,6 +95,7 @@ type C4HCServicesDefinition = {
 };
 
 type C4HCServiceDefinition = {
+  primary?: boolean;
   characteristics: C4HCCharacteristicsDefinition;
   linkedServices?: Exclude<C4HCServicesDefinition, 'linkedServices'>[];
 };
@@ -217,10 +219,11 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
     this.api.on(APIEvent.DID_FINISH_LAUNCHING, async () => this.startup());
   }
 
-  configureAccessory(accessory: PlatformAccessory<C4HCPlatformAccessoryContext>) {
-    this.log.info('Loading accessory from cache:', accessory.displayName);
-    this.accessories.set(accessory.UUID, accessory);
-    this.addAccessory(accessory.context.definition);
+  configureAccessory(accessory: PlatformAccessory<UnknownContext>) {
+    const typedAccessory = accessory as PlatformAccessory<C4HCPlatformAccessoryContext>;
+    this.log.info('Loading accessory from cache:', typedAccessory.displayName);
+    this.accessories.set(typedAccessory.UUID, typedAccessory);
+    this.addAccessory(typedAccessory.context.definition);
   }
 
   async startup() {
@@ -549,7 +552,10 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
           }
         } else {
           message = `added ${payload.external ? 'external ' : ''}accessory '${name}'`;
-          this.log.info(`Adding ${payload.external ? 'external' : 'new'} accessory:`, name);
+          this.log.info(
+            `${payload.external ? 'Exposing external' : 'Adding new'} accessory:`,
+            name,
+          );
           if (!payload.external) {
             this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
           } else {
@@ -580,10 +586,13 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
         : serviceDefinitionOrDefinitions;
       const multipleServiceDefinitions = serviceDefinitions.length > 1;
       for (const serviceDefinition of serviceDefinitions) {
-        const { characteristics: characteristicsDefinition, linkedServices = null } =
-          serviceDefinition === 'default'
-            ? { characteristics: <C4HCCharacteristicsDefinition>{} }
-            : serviceDefinition;
+        const {
+          characteristics: characteristicsDefinition,
+          linkedServices = null,
+          primary = null,
+        } = serviceDefinition === 'default'
+          ? { characteristics: <C4HCCharacteristicsDefinition>{} }
+          : serviceDefinition;
 
         const idCharacteristic =
           (<C4HCCharacteristicDefinition>characteristicsDefinition.Identifier)?.value ??
@@ -634,6 +643,9 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
           };
         }
         addedServices.push(service);
+        if (primary !== null) {
+          service.setPrimaryService(primary);
+        }
 
         // Add any missing required characteristics
         for (const requiredCharacteristic of service.characteristics) {

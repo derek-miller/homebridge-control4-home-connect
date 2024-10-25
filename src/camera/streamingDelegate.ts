@@ -124,7 +124,7 @@ export class StreamingDelegate implements CameraStreamingDelegate {
     this.api = api;
     this.platform = platform;
     this.accessory = accessory;
-    this.ffmpegPath = ffmpegPath || 'ffmpeg';
+    this.ffmpegPath = (ffmpegPath as unknown as string) || 'ffmpeg';
     this.cameraConfig = this.accessory.context.definition.options?.camera ?? {};
 
     this.api.on(APIEvent.SHUTDOWN, () => {

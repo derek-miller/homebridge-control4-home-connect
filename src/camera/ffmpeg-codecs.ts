@@ -20,10 +20,14 @@ export class FfmpegCodecs {
     [codec: string]: { decoders: string[]; encoders: string[] };
   }> {
     if (this._ffmpegCodecs === undefined) {
-      const stdout = await this.runCommand(ffmpegPath || 'ffmpeg', ['-hide_banner', '-codecs']);
-      const decodersRegex = /\S+\s+(?<codec>\S+).+\(decoders:\s+(?<decoders>[^)]+)\s+\)/;
-      const encodersRegex = /\S+\s+(?<codec>\S+).+\(encoders:\s+(?<encoders>[^)]+)\s+\)/;
+      const stdout = await this.runCommand((ffmpegPath as unknown as string) || 'ffmpeg', [
+        '-hide_banner',
+        '-codecs',
+      ]);
+      const decodersRegex = /\S+\s+(?<codec>\S+).+\(decoders:(?<decoders>[^)]+)\)/;
+      const encodersRegex = /\S+\s+(?<codec>\S+).+\(encoders:(?<encoders>[^)]+)\)/;
       this._ffmpegCodecs = {};
+      1;
       for (const codecLine of stdout.toLowerCase().split(os.EOL)) {
         const encodersMatch = encodersRegex.exec(codecLine)?.groups;
         const decodersMatch = decodersRegex.exec(codecLine)?.groups;
@@ -32,8 +36,8 @@ export class FfmpegCodecs {
           continue;
         }
         this._ffmpegCodecs[codec] = {
-          encoders: (encodersMatch?.encoders.split(' ') ?? []).sort(),
-          decoders: (decodersMatch?.decoders.split(' ') ?? []).sort(),
+          encoders: (encodersMatch?.encoders.trim().split(' ') ?? []).sort(),
+          decoders: (decodersMatch?.decoders.trim().split(' ') ?? []).sort(),
         };
       }
     }
