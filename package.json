@@ -12,8 +12,8 @@
     "url": "https://github.com/finitelabs/homebridge-control4-home-connect/issues"
   },
   "engines": {
-    "node": ">=14.18.1",
-    "homebridge": ">=1.3.5 || ^2.0.0-beta.0"
+    "node": ">=18",
+    "homebridge": ">=1.8.0 || ^2.0.0-beta.0"
   },
   "main": "dist/index.js",
   "scripts": {
