@@ -66,6 +66,7 @@ type C4HCSetRequestPayload = C4HCCommonPayload & {
   characteristic: string;
   value: CharacteristicValue;
   identifier?: CharacteristicValue | null;
+  serviceLabelIndex?: CharacteristicValue | null;
 };
 
 type C4HCGetRequestPayload = C4HCCommonPayload & {
@@ -73,6 +74,7 @@ type C4HCGetRequestPayload = C4HCCommonPayload & {
   service: string;
   characteristic: string;
   identifier?: CharacteristicValue;
+  serviceLabelIndex?: CharacteristicValue;
 };
 
 /**
@@ -471,6 +473,9 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
         identifier:
           service.characteristics.find((c) => c instanceof this.Characteristic.Identifier)?.value ??
           undefined,
+        serviceLabelIndex:
+          service.characteristics.find((c) => c instanceof this.Characteristic.ServiceLabelIndex)
+            ?.value ?? undefined,
         value,
       },
     });
@@ -596,17 +601,19 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
 
         const idCharacteristic =
           (<C4HCCharacteristicDefinition>characteristicsDefinition.Identifier)?.value ??
-          <'default' | CharacteristicValue>characteristicsDefinition.Identifier;
+          (<C4HCCharacteristicDefinition>characteristicsDefinition.ServiceLabelIndex)?.value ??
+          <'default' | CharacteristicValue>characteristicsDefinition.Identifier ??
+          <'default' | CharacteristicValue>characteristicsDefinition.ServiceLabelIndex;
         const identifier = typeof idCharacteristic !== 'number' ? null : idCharacteristic;
         if (parentService && identifier === null) {
           return {
-            error: 'linked services must contain an Identifier characteristic',
+            error: 'linked services must contain an Identifier or ServiceLabelIndex characteristic',
           };
         }
         if (multipleServiceDefinitions && identifier === null) {
           return {
             error:
-              'when specifying multiple services, each must contain an Identifier characteristic',
+              'when specifying multiple services, each must contain an Identifier or ServiceLabelIndex characteristic',
           };
         }
 
@@ -642,7 +649,6 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
             error: `unable to add service ${serviceName} to '${accessory.displayName}'`,
           };
         }
-        addedServices.push(service);
         if (primary !== null) {
           service.setPrimaryService(primary);
         }
@@ -686,17 +692,25 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
             service.removeCharacteristic(characteristic);
           });
 
-        if (parentService) {
-          parentService.addLinkedService(service);
-        }
-
         if (linkedServices !== null && !Array.isArray(linkedServices)) {
           return {
             error: `invalid type for service ${serviceName} linkedServices; expected an array`,
           };
         }
         for (const linkedServicesDefinition of linkedServices ?? []) {
-          this.addServicesToAccessory(accessory, linkedServicesDefinition, service, addedServices);
+          const { error } = this.addServicesToAccessory(
+            accessory,
+            linkedServicesDefinition,
+            service,
+            addedServices,
+          );
+          if (error) {
+            return { error };
+          }
+        }
+        addedServices.push(service);
+        if (parentService) {
+          parentService.addLinkedService(service);
         }
       }
     }
@@ -882,7 +896,12 @@ export class C4HCHomebridgePlatform implements DynamicPlatformPlugin {
       };
     }
 
-    const identifier = typeof payload.identifier === 'number' ? `${payload.identifier}` : 'default';
+    const identifier =
+      typeof payload.identifier === 'number'
+        ? `${payload.identifier}`
+        : typeof payload.serviceLabelIndex === 'number'
+          ? `${payload.serviceLabelIndex}`
+          : null;
     const service = accessory.getServiceById(
       serviceType,
       `uuid=${accessory.UUID}|service=${payload.service}|id=${identifier ?? 'default'}`,
